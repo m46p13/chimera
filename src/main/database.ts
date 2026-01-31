@@ -46,6 +46,13 @@ export type DbWorkspaceFile = {
   position: number;
 };
 
+export type DbAppSession = {
+  id: number;
+  started_at: number;
+  ended_at: number | null;
+  duration_seconds: number | null;
+};
+
 let db: Database.Database | null = null;
 
 const getDbPath = (): string => {
@@ -152,6 +159,16 @@ export const initDatabase = (): Database.Database => {
     );
 
     CREATE INDEX IF NOT EXISTS idx_workspace_files_workspace ON workspace_files(workspace_id);
+
+    -- App sessions table (track actual app usage time)
+    CREATE TABLE IF NOT EXISTS app_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      started_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+      ended_at INTEGER,
+      duration_seconds INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_app_sessions_started ON app_sessions(started_at);
 
     -- Indexes
     CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
@@ -366,6 +383,32 @@ export const exportData = (): { settings: Record<string, string>; threads: DbThr
   };
 };
 
+// App session operations
+export const startAppSession = (): number => {
+  const database = getDatabase();
+  const now = Math.floor(Date.now() / 1000);
+  const result = database.prepare(
+    "INSERT INTO app_sessions (started_at, ended_at, duration_seconds) VALUES (?, NULL, NULL)"
+  ).run(now);
+  return result.lastInsertRowid as number;
+};
+
+export const updateAppSession = (sessionId: number): void => {
+  const database = getDatabase();
+  const now = Math.floor(Date.now() / 1000);
+  database.prepare(
+    "UPDATE app_sessions SET ended_at = ?, duration_seconds = ended_at - started_at WHERE id = ?"
+  ).run(now, sessionId);
+};
+
+export const getCurrentAppSession = (): DbAppSession | null => {
+  const database = getDatabase();
+  // Get the most recent session that has no ended_at (still active)
+  return database.prepare(
+    "SELECT * FROM app_sessions WHERE ended_at IS NULL ORDER BY started_at DESC LIMIT 1"
+  ).get() as DbAppSession | undefined ?? null;
+};
+
 // Usage statistics
 export type UsageStats = {
   sessionsThisWeek: number;
@@ -376,6 +419,7 @@ export type UsageStats = {
   totalFileChanges: number;
   totalActivities: number;
   timeSpentMinutes: number;
+  timeSpentThisWeekMinutes: number;
   mostActiveDay: string | null;
   mostActiveDayCount: number;
 };
@@ -418,8 +462,27 @@ export const getUsageStats = (): UsageStats => {
     "SELECT COUNT(*) as count FROM activity WHERE kind != 'thinking'"
   ).get() as { count: number };
 
-  // Estimate time spent based on activity (rough estimate: 2 minutes per message)
-  const timeSpentMinutes = Math.round(totalMessages.count * 2);
+  // Calculate actual time spent from app_sessions
+  // Total time: sum of all completed sessions
+  const totalTimeResult = database.prepare(
+    "SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds FROM app_sessions WHERE duration_seconds IS NOT NULL"
+  ).get() as { total_seconds: number };
+
+  // Time this week: sum of sessions started this week (or with duration falling in this week)
+  const timeThisWeekResult = database.prepare(
+    "SELECT COALESCE(SUM(duration_seconds), 0) as total_seconds FROM app_sessions WHERE started_at >= ? AND duration_seconds IS NOT NULL"
+  ).get(oneWeekAgo) as { total_seconds: number };
+
+  // Also add the current active session time if there is one
+  const currentSession = getCurrentAppSession();
+  let currentSessionMinutes = 0;
+  if (currentSession) {
+    currentSessionMinutes = Math.floor((now - currentSession.started_at) / 60);
+  }
+
+  const timeSpentMinutes = Math.floor(totalTimeResult.total_seconds / 60) + currentSessionMinutes;
+  const timeSpentThisWeekMinutes = Math.floor(timeThisWeekResult.total_seconds / 60) + 
+    (currentSession && currentSession.started_at >= oneWeekAgo ? currentSessionMinutes : 0);
 
   // Most active day
   const mostActiveDay = database.prepare(`
@@ -441,6 +504,7 @@ export const getUsageStats = (): UsageStats => {
     totalFileChanges: totalFileChanges.count,
     totalActivities: totalActivities.count,
     timeSpentMinutes,
+    timeSpentThisWeekMinutes,
     mostActiveDay: mostActiveDay?.day ?? null,
     mostActiveDayCount: mostActiveDay?.count ?? 0,
   };

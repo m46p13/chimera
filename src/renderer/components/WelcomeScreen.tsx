@@ -220,8 +220,9 @@ function UsageStatsSection() {
         />
         <StatCard
           icon={<ClockIcon className="stat-svg" />}
-          value={formatTime(stats.timeSpentMinutes)}
+          value={formatTime(stats.timeSpentThisWeekMinutes)}
           label="Coding time"
+          subtext={stats.timeSpentMinutes > stats.timeSpentThisWeekMinutes ? `${formatTime(stats.timeSpentMinutes)} total` : undefined}
         />
         <StatCard
           icon={<FileIcon className="stat-svg" />}
@@ -410,9 +411,6 @@ export function WelcomeScreen({
           </div>
         </div>
 
-        {/* Usage Stats */}
-        <UsageStatsSection />
-
         {/* Quick Actions */}
         <div className="welcome-section">
           <h2 className="welcome-section-title">Quick Actions</h2>
@@ -459,6 +457,9 @@ export function WelcomeScreen({
             </div>
           )}
         </div>
+
+        {/* Usage Stats */}
+        <UsageStatsSection />
 
         {/* Status Indicators */}
         <div className="welcome-section welcome-section--compact">

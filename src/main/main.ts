@@ -506,6 +506,9 @@ let mainWindow: BrowserWindow | null = null;
 let codex: CodexAppServer | null = null;
 let browserMcp: BrowserMcpBridge | null = null;
 let lastStatus: CodexStatus = { state: "starting" };
+let currentAppSessionId: number | null = null;
+let appSessionHeartbeat: NodeJS.Timeout | null = null;
+const APP_SESSION_HEARTBEAT_INTERVAL = 30000; // 30 seconds
 
 const callBrowserPanel = async <T>(method: string, ...args: unknown[]): Promise<T> => {
   if (!mainWindow) {
@@ -1332,6 +1335,46 @@ const createMcpHttpServer = () => {
   return server;
 };
 
+// App session management
+const startAppSession = (): void => {
+  currentAppSessionId = db.startAppSession();
+  if (process.env.NODE_ENV === "development") {
+    console.log("[App Session] Started session:", currentAppSessionId);
+  }
+};
+
+const updateCurrentAppSession = (): void => {
+  if (currentAppSessionId !== null) {
+    db.updateAppSession(currentAppSessionId);
+  }
+};
+
+const stopAppSession = (): void => {
+  if (appSessionHeartbeat) {
+    clearInterval(appSessionHeartbeat);
+    appSessionHeartbeat = null;
+  }
+  if (currentAppSessionId !== null) {
+    db.updateAppSession(currentAppSessionId);
+    if (process.env.NODE_ENV === "development") {
+      console.log("[App Session] Stopped session:", currentAppSessionId);
+    }
+    currentAppSessionId = null;
+  }
+};
+
+const setupAppSessionHeartbeat = (): void => {
+  // Update the session every 30 seconds while app is running
+  appSessionHeartbeat = setInterval(() => {
+    if (currentAppSessionId !== null) {
+      db.updateAppSession(currentAppSessionId);
+      if (process.env.NODE_ENV === "development") {
+        console.log("[App Session] Heartbeat updated:", currentAppSessionId);
+      }
+    }
+  }, APP_SESSION_HEARTBEAT_INTERVAL);
+};
+
 // Handle tool calls from Codex by forwarding to MCP bridge
 const handleCodexRequest = async (request: JsonRpcServerRequest) => {
   // Check if this is a dynamic tool call
@@ -1438,6 +1481,10 @@ app.whenReady().then(async () => {
 
   await bootCodex();
 
+  // Start app session tracking
+  startAppSession();
+  setupAppSessionHeartbeat();
+
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
@@ -1452,6 +1499,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", async () => {
+  stopAppSession();
   await codex?.stop();
   await browserMcp?.stop();
   pty.killAllPty();

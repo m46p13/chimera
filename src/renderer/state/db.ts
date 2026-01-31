@@ -191,6 +191,7 @@ export type UsageStats = {
   totalFileChanges: number;
   totalActivities: number;
   timeSpentMinutes: number;
+  timeSpentThisWeekMinutes: number;
   mostActiveDay: string | null;
   mostActiveDayCount: number;
 };
