@@ -5,9 +5,9 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
   // Configure logging
   autoUpdater.logger = console;
   
-  // Don't auto-download, let user decide
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = true;
+  // Auto-download in background - no UI during download
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
 
   // Events
   autoUpdater.on('checking-for-update', () => {
@@ -15,10 +15,12 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
   });
 
   autoUpdater.on('update-available', (info) => {
+    // Download starts automatically since autoDownload = true
+    // Just notify that download is starting
     mainWindow.webContents.send('updater:status', { 
-      status: 'available', 
+      status: 'downloading', 
       version: info.version,
-      releaseNotes: info.releaseNotes 
+      percent: 0
     });
   });
 

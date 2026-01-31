@@ -241,7 +241,6 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [appVersion, setAppVersion] = useState("0.1.0");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [updateMessage, setUpdateMessage] = useState<{ type: "info" | "success" | "error"; text: string } | null>(null);
 
   // Atoms
   const [theme, setTheme] = useAtom(themeAtom);
@@ -296,29 +295,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     loadConfig();
   }, [isOpen, setStartOnLogin, setCheckForUpdates, setLanguage]);
 
-  // Listen for update status
-  useEffect(() => {
-    const cleanup = window.codex?.updater?.onStatus?.((status) => {
-      setCheckingUpdate(false);
-      if (status.status === "available") {
-        // Silently start download - no message yet
-        setUpdateMessage({ type: "info", text: "Downloading update..." });
-        window.codex?.updater?.download?.();
-      } else if (status.status === "up-to-date") {
-        setUpdateMessage({ type: "info", text: "You're running the latest version." });
-        setTimeout(() => setUpdateMessage(null), 3000);
-      } else if (status.status === "downloading") {
-        const percent = Math.round(status.percent || 0);
-        setUpdateMessage({ type: "info", text: `Downloading update... ${percent}%` });
-      } else if (status.status === "ready") {
-        setUpdateMessage({ type: "success", text: `v${status.version} ready to install` });
-      } else if (status.status === "error") {
-        setUpdateMessage({ type: "error", text: `Update failed: ${status.error || "Unknown error"}` });
-        setTimeout(() => setUpdateMessage(null), 5000);
-      }
-    });
-    return () => cleanup?.();
-  }, []);
+  // Note: Update status is now handled globally by UpdateNotification component
+  // Settings only triggers the check, progress is shown via toast notification
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -400,10 +378,9 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     try {
       // Use electron-updater via preload API
       await window.codex?.updater?.check?.();
-      // Status will come through the updater:status event
-      setTimeout(() => setCheckingUpdate(false), 3000);
+      // Status is handled by UpdateNotification component via toast
+      setTimeout(() => setCheckingUpdate(false), 2000);
     } catch {
-      alert("Failed to check for updates.");
       setCheckingUpdate(false);
     }
   };
@@ -864,18 +841,13 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                       <div className="about-actions">
                         <button
                           className="btn primary"
-                          onClick={updateMessage?.text.includes("ready") ? () => window.codex?.updater?.install?.() : handleCheckUpdate}
+                          onClick={handleCheckUpdate}
                           disabled={checkingUpdate}
                         >
                           {checkingUpdate ? (
                             <>
                               <span className="spinner small" />
                               Checking...
-                            </>
-                          ) : updateMessage?.text.includes("ready") ? (
-                            <>
-                              <RefreshIcon className="btn-icon" />
-                              Restart to Update
                             </>
                           ) : (
                             <>
@@ -884,11 +856,6 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                             </>
                           )}
                         </button>
-                        {updateMessage && (
-                          <div className={`update-message ${updateMessage.type}`}>
-                            {updateMessage.text}
-                          </div>
-                        )}
                       </div>
                     </div>
 
