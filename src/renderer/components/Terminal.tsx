@@ -32,17 +32,21 @@ export function Terminal({ cwd, isVisible, onClose }: TerminalProps) {
   // Create a new terminal tab
   const createTerminal = useCallback(async () => {
     const id = generateId();
-    const title = `Terminal ${tabs.length + 1}`;
+    
+    // Use functional update to avoid dependency on tabs.length
+    let newTabTitle = "Terminal";
+    setTabs((prev) => {
+      newTabTitle = `Terminal ${prev.length + 1}`;
+      return [...prev, { id, title: newTabTitle }];
+    });
 
     // Create PTY on main process
     await window.codex?.pty.create(id, cwd);
 
-    // Add to tabs
-    setTabs((prev) => [...prev, { id, title }]);
     setActiveTab(id);
 
     return id;
-  }, [cwd, generateId, tabs.length]);
+  }, [cwd, generateId]);
 
   // Close a terminal tab
   const closeTerminal = useCallback(
@@ -162,6 +166,18 @@ export function Terminal({ cwd, isVisible, onClose }: TerminalProps) {
     return () => {
       unsubData?.();
       unsubExit?.();
+    };
+  }, []);
+
+  // Cleanup all terminals on component unmount
+  useEffect(() => {
+    return () => {
+      // Dispose all xterm instances to prevent memory leaks
+      terminalsRef.current.forEach((terminal) => {
+        terminal.dispose();
+      });
+      terminalsRef.current.clear();
+      fitAddonsRef.current.clear();
     };
   }, []);
 

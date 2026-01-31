@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 
 type BrowserPanelProps = {
   onNavigate?: (url: string) => void;
@@ -155,6 +155,12 @@ export function BrowserPanel({ onNavigate, onSnapshot }: BrowserPanelProps) {
     }
   }, []);
 
+  // Store callbacks in refs to keep stable references for window.browserPanel
+  const callbacksRef = useRef({ navigate, goBack, goForward, reload, takeSnapshot, executeJS, screenshot, click, type, url, title });
+  useEffect(() => {
+    callbacksRef.current = { navigate, goBack, goForward, reload, takeSnapshot, executeJS, screenshot, click, type, url, title };
+  });
+
   // Setup webview event listeners
   useEffect(() => {
     const webview = webviewRef.current;
@@ -190,25 +196,26 @@ export function BrowserPanel({ onNavigate, onSnapshot }: BrowserPanelProps) {
   }, []);
 
   // Expose methods for external control
+  // Uses ref to avoid recreating on every render
   useEffect(() => {
     window.browserPanel = {
-      navigate,
-      goBack,
-      goForward,
-      reload,
-      takeSnapshot,
-      executeJS,
-      screenshot,
-      click,
-      type,
-      getUrl: () => url,
-      getTitle: () => title,
+      navigate: (...args) => callbacksRef.current.navigate(...args),
+      goBack: () => callbacksRef.current.goBack(),
+      goForward: () => callbacksRef.current.goForward(),
+      reload: () => callbacksRef.current.reload(),
+      takeSnapshot: () => callbacksRef.current.takeSnapshot(),
+      executeJS: (...args) => callbacksRef.current.executeJS(...args),
+      screenshot: () => callbacksRef.current.screenshot(),
+      click: (...args) => callbacksRef.current.click(...args),
+      type: (...args) => callbacksRef.current.type(...args),
+      getUrl: () => callbacksRef.current.url,
+      getTitle: () => callbacksRef.current.title,
     };
     
     return () => {
       delete window.browserPanel;
     };
-  }, [navigate, goBack, goForward, reload, takeSnapshot, executeJS, screenshot, click, type, url, title]);
+  }, []);
 
   return (
     <div className="browser-panel">

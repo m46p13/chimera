@@ -471,6 +471,20 @@ export default function App() {
     // should be handled by a central atom cleanup mechanism
   }, []);
 
+  // Cleanup old thread data periodically to prevent unbounded growth
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Remove threads that no longer exist in threadIds
+      const currentIds = new Set(threadIds);
+      for (const id of pendingThreadUpdates.current.keys()) {
+        if (!currentIds.has(id)) {
+          pendingThreadUpdates.current.delete(id);
+        }
+      }
+    }, 60000); // Clean up every minute
+    return () => clearInterval(interval);
+  }, [threadIds]);
+
   // Effect to apply thread updates
   useEffect(() => {
     pendingThreadUpdates.current.forEach((thread, id) => {
@@ -1744,6 +1758,12 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
   const activeThreadDisplay = useMemo(() => activeThreadId ? pendingThreadUpdates.current.get(activeThreadId) || null : null, [activeThreadId, threadIds]);
   const workspaceReadyDisplay = Boolean(activeThreadDisplay?.cwd);
 
+  // Stable callbacks for thread row actions to prevent memoization breaks
+  const handleSelectThread = useCallback((id: string) => () => selectThread(id), [selectThread]);
+  const handleTogglePin = useCallback((id: string) => () => togglePin(id), [togglePin]);
+  const handleToggleArchive = useCallback((id: string) => () => toggleArchive(id), [toggleArchive]);
+  const handleCloseWorkspace = useCallback((id: string) => () => closeWorkspace(id), [closeWorkspace]);
+
   return (
     <div className={`app${!activeThreadId ? " no-sidebar" : ""}`} style={{ ["--sidebar-width" as any]: `${sidebarWidth}px`, ["--inspector-width" as any]: `${inspectorWidth}px` }}>
       {activeThreadId && (
@@ -1764,7 +1784,15 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
             <div className="sidebar-section">
               <div className="section-title">Pinned</div>
               {pinnedThreadsDisplay.map((thread) => (
-                <ThreadRow key={thread.id} thread={thread} active={thread.id === activeThreadId} onSelect={() => selectThread(thread.id)} onPin={() => togglePin(thread.id)} onArchive={() => toggleArchive(thread.id)} onClose={() => closeWorkspace(thread.id)} />
+                <ThreadRow 
+                  key={thread.id} 
+                  thread={thread} 
+                  active={thread.id === activeThreadId} 
+                  onSelect={handleSelectThread(thread.id)} 
+                  onPin={handleTogglePin(thread.id)} 
+                  onArchive={handleToggleArchive(thread.id)} 
+                  onClose={handleCloseWorkspace(thread.id)} 
+                />
               ))}
             </div>
           )}
@@ -1773,7 +1801,15 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
             <div className="section-title">Sessions</div>
             {regularThreadsDisplay.length === 0 && historyLoaded && <div className="thread-empty">No sessions yet. Click + to start one.</div>}
             {regularThreadsDisplay.map((thread) => (
-              <ThreadRow key={thread.id} thread={thread} active={thread.id === activeThreadId} onSelect={() => selectThread(thread.id)} onPin={() => togglePin(thread.id)} onArchive={() => toggleArchive(thread.id)} onClose={() => closeWorkspace(thread.id)} />
+              <ThreadRow 
+                key={thread.id} 
+                thread={thread} 
+                active={thread.id === activeThreadId} 
+                onSelect={handleSelectThread(thread.id)} 
+                onPin={handleTogglePin(thread.id)} 
+                onArchive={handleToggleArchive(thread.id)} 
+                onClose={handleCloseWorkspace(thread.id)} 
+              />
             ))}
           </div>
 
@@ -1781,7 +1817,15 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
             <div className="sidebar-section">
               <div className="section-title">Archived</div>
               {archivedThreadsDisplay.map((thread) => (
-                <ThreadRow key={thread.id} thread={thread} active={thread.id === activeThreadId} onSelect={() => selectThread(thread.id)} onPin={() => togglePin(thread.id)} onArchive={() => toggleArchive(thread.id)} onClose={() => closeWorkspace(thread.id)} />
+                <ThreadRow 
+                  key={thread.id} 
+                  thread={thread} 
+                  active={thread.id === activeThreadId} 
+                  onSelect={handleSelectThread(thread.id)} 
+                  onPin={handleTogglePin(thread.id)} 
+                  onArchive={handleToggleArchive(thread.id)} 
+                  onClose={handleCloseWorkspace(thread.id)} 
+                />
               ))}
             </div>
           )}

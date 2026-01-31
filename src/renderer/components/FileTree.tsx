@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, memo } from "react";
 
 export type FileNode = {
   name: string;
@@ -88,7 +88,7 @@ const getFileIcon = (name: string, type: "file" | "directory"): string => {
   return iconMap[ext] || "📄";
 };
 
-function FileTreeNode({
+const FileTreeNode = memo(function FileTreeNode({
   node,
   level,
   onToggle,
@@ -155,9 +155,9 @@ function FileTreeNode({
       )}
     </>
   );
-}
+});
 
-function FileTreeSearch({
+const FileTreeSearch = memo(function FileTreeSearch({
   value,
   onChange,
 }: {
@@ -175,9 +175,9 @@ function FileTreeSearch({
       />
     </div>
   );
-}
+});
 
-export function FileTree({
+export const FileTree = memo(function FileTree({
   rootPath,
   onFileSelect,
   onFileOpen,
@@ -434,6 +434,6 @@ export function FileTree({
       )}
     </div>
   );
-}
+});
 
 export default FileTree;

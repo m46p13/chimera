@@ -45,13 +45,13 @@ export function useIdleDetection(options: UseIdleDetectionOptions = {}) {
 
   useEffect(() => {
     // Activity events to monitor
+    // Note: mousemove is throttled separately to reduce battery drain
     const activityEvents = [
       "mousedown",
       "keydown",
       "touchstart",
       "wheel",
       "scroll",
-      "mousemove",
       "click",
     ];
 
@@ -59,6 +59,17 @@ export function useIdleDetection(options: UseIdleDetectionOptions = {}) {
     activityEvents.forEach((event) => {
       window.addEventListener(event, recordActivity, { passive: true });
     });
+
+    // Throttle mousemove to reduce battery drain (max once per 500ms)
+    let mouseMoveTimeout: NodeJS.Timeout | null = null;
+    const throttledMouseMove = () => {
+      if (mouseMoveTimeout) return;
+      mouseMoveTimeout = setTimeout(() => {
+        mouseMoveTimeout = null;
+      }, 500);
+      recordActivity();
+    };
+    window.addEventListener("mousemove", throttledMouseMove, { passive: true });
 
     // Start the initial timeout
     timeoutRef.current = setTimeout(() => {
@@ -70,6 +81,10 @@ export function useIdleDetection(options: UseIdleDetectionOptions = {}) {
       activityEvents.forEach((event) => {
         window.removeEventListener(event, recordActivity);
       });
+      window.removeEventListener("mousemove", throttledMouseMove);
+      if (mouseMoveTimeout) {
+        clearTimeout(mouseMoveTimeout);
+      }
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);
       }

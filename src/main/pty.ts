@@ -6,6 +6,9 @@ type PtyProcess = {
   pty: pty.IPty;
   id: string;
   cwd: string;
+  // Store event handlers for proper cleanup
+  dataHandler: (data: string) => void;
+  exitHandler: ({ exitCode, signal }: { exitCode: number; signal?: number }) => void;
 };
 
 const shells = new Map<string, PtyProcess>();
@@ -30,20 +33,25 @@ export function createPty(id: string, cwd: string): string {
     },
   });
 
-  ptyProcess.onData((data) => {
+  // Create stable event handlers
+  const dataHandler = (data: string) => {
     if (mainWindow) {
       mainWindow.webContents.send("pty:data", { id, data });
     }
-  });
+  };
 
-  ptyProcess.onExit(({ exitCode, signal }) => {
+  const exitHandler = ({ exitCode, signal }: { exitCode: number; signal?: number }) => {
     if (mainWindow) {
       mainWindow.webContents.send("pty:exit", { id, exitCode, signal });
     }
+    // Clean up from shells map
     shells.delete(id);
-  });
+  };
 
-  shells.set(id, { pty: ptyProcess, id, cwd });
+  ptyProcess.onData(dataHandler);
+  ptyProcess.onExit(exitHandler);
+
+  shells.set(id, { pty: ptyProcess, id, cwd, dataHandler, exitHandler });
 
   return id;
 }
@@ -65,7 +73,10 @@ export function resizePty(id: string, cols: number, rows: number): boolean {
 export function killPty(id: string): boolean {
   const shell = shells.get(id);
   if (!shell) return false;
+  
+  // Kill the PTY process - the exit handler will handle cleanup
   shell.pty.kill();
+  // Remove from shells map immediately
   shells.delete(id);
   return true;
 }

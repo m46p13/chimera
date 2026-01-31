@@ -1,15 +1,9 @@
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState, memo } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { EditorState, Extension } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxHighlighting, defaultHighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { python } from "@codemirror/lang-python";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
 import { oneDark } from "@codemirror/theme-one-dark";
 
 import {
@@ -27,42 +21,84 @@ import {
 } from "../state/atoms/editor";
 import { themeAtom } from "../state/atoms/settings";
 
-// Get language extension based on file extension
-const getLanguageExtension = (filename: string): Extension => {
+// Language extensions cache to avoid reloading
+const languageCache = new Map<string, Extension>();
+
+// Dynamic language loader to reduce bundle size
+const loadLanguageExtension = async (filename: string): Promise<Extension> => {
   const ext = filename.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
-      return javascript({ jsx: true });
-    case "ts":
-    case "tsx":
-    case "mts":
-    case "cts":
-      return javascript({ jsx: true, typescript: true });
-    case "py":
-    case "pyw":
-      return python();
-    case "css":
-    case "scss":
-    case "less":
-      return css();
-    case "html":
-    case "htm":
-    case "vue":
-    case "svelte":
-      return html();
-    case "json":
-    case "jsonc":
-      return json();
-    case "md":
-    case "mdx":
-    case "markdown":
-      return markdown();
-    default:
-      return [];
+  
+  // Check cache first
+  if (ext && languageCache.has(ext)) {
+    return languageCache.get(ext)!;
   }
+
+  let extension: Extension = [];
+
+  try {
+    switch (ext) {
+      case "js":
+      case "jsx":
+      case "mjs":
+      case "cjs": {
+        const { javascript } = await import("@codemirror/lang-javascript");
+        extension = javascript({ jsx: true });
+        break;
+      }
+      case "ts":
+      case "tsx":
+      case "mts":
+      case "cts": {
+        const { javascript } = await import("@codemirror/lang-javascript");
+        extension = javascript({ jsx: true, typescript: true });
+        break;
+      }
+      case "py":
+      case "pyw": {
+        const { python } = await import("@codemirror/lang-python");
+        extension = python();
+        break;
+      }
+      case "css":
+      case "scss":
+      case "less": {
+        const { css } = await import("@codemirror/lang-css");
+        extension = css();
+        break;
+      }
+      case "html":
+      case "htm":
+      case "vue":
+      case "svelte": {
+        const { html } = await import("@codemirror/lang-html");
+        extension = html();
+        break;
+      }
+      case "json":
+      case "jsonc": {
+        const { json } = await import("@codemirror/lang-json");
+        extension = json();
+        break;
+      }
+      case "md":
+      case "mdx":
+      case "markdown": {
+        const { markdown } = await import("@codemirror/lang-markdown");
+        extension = markdown();
+        break;
+      }
+    }
+  } catch (err) {
+    // Language module failed to load, continue without syntax highlighting
+    console.warn(`Failed to load language support for .${ext}:`, err);
+  }
+
+  // Cache the result
+  if (ext) {
+    languageCache.set(ext, extension);
+  }
+
+  return extension;
 };
 
 // Light theme for CodeMirror
@@ -131,7 +167,8 @@ type EditorTabsProps = {
   onClose: (path: string) => void;
 };
 
-function EditorTabs({ files, activeFile, dirtyFiles, onSelect, onClose }: EditorTabsProps) {
+// Memoized EditorTabs component
+const EditorTabs = memo(function EditorTabs({ files, activeFile, dirtyFiles, onSelect, onClose }: EditorTabsProps) {
   if (files.length === 0) return null;
 
   return (
@@ -166,7 +203,7 @@ function EditorTabs({ files, activeFile, dirtyFiles, onSelect, onClose }: Editor
       })}
     </div>
   );
-}
+});
 
 type CodeEditorProps = {
   content: string;
@@ -176,10 +213,23 @@ type CodeEditorProps = {
   onSave?: () => void;
 };
 
-function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: CodeEditorProps) {
+// Memoized CodeEditor component
+const CodeEditor = memo(function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: CodeEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const theme = useAtomValue(themeAtom);
+  const [languageExt, setLanguageExt] = useState<Extension>([]);
+
+  // Load language extension dynamically
+  useEffect(() => {
+    let cancelled = false;
+    loadLanguageExtension(filename).then((ext) => {
+      if (!cancelled) {
+        setLanguageExt(ext);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [filename]);
 
   const handleChange = useCallback(
     (update: { state: EditorState; docChanged: boolean }) => {
@@ -190,6 +240,7 @@ function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: C
     [onChange]
   );
 
+  // Initialize or recreate editor when dependencies change
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -213,7 +264,7 @@ function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: C
     const extensions: Extension[] = [
       saveKeymap,
       ...baseExtensions,
-      getLanguageExtension(filename),
+      languageExt,
       theme === "dark" ? oneDark : lightTheme,
       EditorView.editable.of(!readOnly),
       EditorView.updateListener.of(handleChange),
@@ -234,9 +285,9 @@ function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: C
     return () => {
       view.destroy();
     };
-  }, [filename, theme, readOnly, onSave]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filename, theme, readOnly, onSave, languageExt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Update content when it changes externally
+  // Update content when it changes externally (but not from editor itself)
   useEffect(() => {
     if (viewRef.current) {
       const currentContent = viewRef.current.state.doc.toString();
@@ -253,13 +304,14 @@ function CodeEditor({ content, filename, readOnly = false, onChange, onSave }: C
   }, [content]);
 
   return <div className="code-editor-container" ref={containerRef} />;
-}
+});
 
 type EditorPanelProps = {
   workspaceId?: string | null;
 };
 
-export function EditorPanel({ workspaceId }: EditorPanelProps) {
+// Memoized EditorPanel component
+export const EditorPanel = memo(function EditorPanel({ workspaceId }: EditorPanelProps) {
   const [openFiles, setOpenFiles] = useAtom(openFilesAtom);
   const [activeFile, setActiveFile] = useAtom(activeFileAtom);
   const [fileContents, setFileContents] = useAtom(fileContentsAtom);
@@ -383,7 +435,7 @@ export function EditorPanel({ workspaceId }: EditorPanelProps) {
       </div>
     </div>
   );
-}
+});
 
 // Export hook for opening files from other components
 export function useOpenFile() {
