@@ -238,6 +238,26 @@ type UsageStats = {
   mostActiveDayCount: number;
 };
 
+// Rate limit types
+type RateLimitWindow = {
+  used_percent: number;
+  resets_at?: number;
+  window_minutes?: number;
+};
+
+type CreditsSnapshot = {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance?: string;
+};
+
+type RateLimitSnapshot = {
+  captured_at: number;
+  primary?: RateLimitWindow;
+  secondary?: RateLimitWindow;
+  credits?: CreditsSnapshot;
+};
+
 declare global {
   interface Window {
     codex?: {
@@ -252,6 +272,7 @@ declare global {
         message?: string;
       }>;
       pickFolder: () => Promise<string | null>;
+      createNewSession: () => Promise<{ success: boolean; path?: string; workspace?: Workspace; error?: string }>;
       onNotification: (handler: (notification: { method: string; params?: any }) => void) => () => void;
       onRequest: (
         handler: (request: { id: number; method: string; params?: any }) => void
@@ -356,6 +377,10 @@ declare global {
         install: () => Promise<void>;
         onStatus: (callback: (status: UpdateStatus) => void) => () => void;
       };
+
+      // Rate limits API
+      getRateLimits: () => Promise<RateLimitSnapshot | null>;
+      onRateLimits: (handler: (snapshot: RateLimitSnapshot | null) => void) => () => void;
 
       // Clone repository API
       cloneRepo?: (url: string, destinationPath?: string) => Promise<{ success: boolean; path?: string; workspace?: Workspace; error?: string }>;

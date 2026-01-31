@@ -10,6 +10,25 @@ type CodexNotification = {
   params?: unknown;
 };
 
+type RateLimitWindow = {
+  used_percent: number;
+  resets_at?: number;
+  window_minutes?: number;
+};
+
+type CreditsSnapshot = {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance?: string;
+};
+
+type RateLimitSnapshot = {
+  captured_at: number;
+  primary?: RateLimitWindow;
+  secondary?: RateLimitWindow;
+  credits?: CreditsSnapshot;
+};
+
 type CodexRequest = {
   id: number;
   method: string;
@@ -32,6 +51,7 @@ const api = {
   getStatus: () => ipcRenderer.invoke("codex:status"),
   pickFolder: () => ipcRenderer.invoke("chimera:pick-folder"),
   cloneRepo: (url: string, destinationPath?: string) => ipcRenderer.invoke("chimera:clone-repo", url, destinationPath),
+  createNewSession: () => ipcRenderer.invoke("chimera:create-new-session"),
   onCloneProgress: (handler: (payload: { stage: string; message: string }) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string }) => {
       handler(payload);
@@ -66,6 +86,16 @@ const api = {
     };
     ipcRenderer.on("codex:status", listener);
     return () => ipcRenderer.removeListener("codex:status", listener);
+  },
+
+  // Rate limits API
+  getRateLimits: () => ipcRenderer.invoke("codex:rateLimits"),
+  onRateLimits: (handler: (snapshot: RateLimitSnapshot | null) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, snapshot: RateLimitSnapshot | null) => {
+      handler(snapshot);
+    };
+    ipcRenderer.on("codex:rateLimits", listener);
+    return () => ipcRenderer.removeListener("codex:rateLimits", listener);
   },
 
   // Browser automation API

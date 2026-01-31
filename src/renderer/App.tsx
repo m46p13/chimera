@@ -8,7 +8,7 @@ import remarkGfm from "remark-gfm";
 import { CommandPalette, TerminalPanel, DiffPanel, SplitLayout, BrowserPanel, CloudPanel, WelcomeScreen, UpdateNotification, Settings } from "./components";
 
 // Import hooks
-import { useKeyboardShortcuts, type Command, useDebounce, useThreadCache, useIdleDetection } from "./hooks";
+import { useKeyboardShortcuts, type Command, useDebounce, useThreadCache, useIdleDetection, useRateLimitSync } from "./hooks";
 
 // Import atoms
 import {
@@ -339,6 +339,9 @@ export default function App() {
     },
     { waitMs: 50, leading: false, trailing: true }
   );
+
+  // Sync rate limits from main process
+  useRateLimitSync();
 
   // Theme
   const [theme, setTheme] = useAtom(themeAtom);
@@ -943,13 +946,8 @@ export default function App() {
     selectThread(activeThreadId);
   }, [activeThreadId, selectThread, status.state]);
 
-  const openWorkspace = useCallback(async () => {
-    if (!window.codex?.pickFolder) {
-      pushActivity("Folder picker unavailable");
-      return;
-    }
-    const cwd = await window.codex.pickFolder();
-    if (!cwd || typeof cwd !== "string") return;
+  const startSessionInFolder = useCallback(async (cwd: string) => {
+    if (!window.codex) return;
     try {
       autoResumeRef.current = true;
 
@@ -1026,6 +1024,29 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
       pushActivity("Failed to open workspace", String(err));
     }
   }, [approvalPolicy, pushActivity, sandboxMode, selectedEffort, selectedModelId, setActiveThreadId, setActiveDetail, setThreadIds, setSelectedModelId, setSelectedEffort, setApprovalPresetId, mcpTools, mcpReady]);
+
+  const createNewSession = useCallback(async () => {
+    if (!window.codex?.createNewSession) {
+      pushActivity("New session unavailable");
+      return;
+    }
+    const result = await window.codex.createNewSession();
+    if (!result?.success || !result?.path) {
+      pushActivity("Failed to create new session", result?.error || "Unknown error");
+      return;
+    }
+    await startSessionInFolder(result.path);
+  }, [pushActivity, startSessionInFolder]);
+
+  const openWorkspace = useCallback(async () => {
+    if (!window.codex?.pickFolder) {
+      pushActivity("Folder picker unavailable");
+      return;
+    }
+    const cwd = await window.codex.pickFolder();
+    if (!cwd || typeof cwd !== "string") return;
+    await startSessionInFolder(cwd);
+  }, [pushActivity, startSessionInFolder]);
 
   const sendTurn = useCallback(async () => {
     if (!window.codex) return;
@@ -1810,7 +1831,7 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
             <WelcomeScreen
               onOpenFolder={openWorkspace}
               onOpenSettings={() => setShowSettings(true)}
-              onNewSession={openWorkspace}
+              onNewSession={createNewSession}
               onSelectThread={selectThread}
             />
           ) : (
