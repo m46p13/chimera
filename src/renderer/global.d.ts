@@ -357,6 +357,10 @@ declare global {
         onStatus: (callback: (status: UpdateStatus) => void) => () => void;
       };
 
+      // Clone repository API
+      cloneRepo?: (url: string, destinationPath?: string) => Promise<{ success: boolean; path?: string; workspace?: Workspace; error?: string }>;
+      onCloneProgress?: (handler: (payload: { stage: string; message: string }) => void) => () => void;
+
       // App info API
       getAppPath?: () => Promise<string>;
       getAppVersion?: () => Promise<string>;

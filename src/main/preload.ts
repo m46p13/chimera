@@ -31,6 +31,14 @@ const api = {
     ipcRenderer.invoke("codex:respond", { id, result, error }),
   getStatus: () => ipcRenderer.invoke("codex:status"),
   pickFolder: () => ipcRenderer.invoke("chimera:pick-folder"),
+  cloneRepo: (url: string, destinationPath?: string) => ipcRenderer.invoke("chimera:clone-repo", url, destinationPath),
+  onCloneProgress: (handler: (payload: { stage: string; message: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, payload: { stage: string; message: string }) => {
+      handler(payload);
+    };
+    ipcRenderer.on("chimera:clone-progress", listener);
+    return () => ipcRenderer.removeListener("chimera:clone-progress", listener);
+  },
   onNotification: (handler: (notification: CodexNotification) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: CodexNotification) => {
       handler(payload);

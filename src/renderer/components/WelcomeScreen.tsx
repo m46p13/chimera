@@ -305,10 +305,14 @@ function CloneModal({
   isOpen,
   onClose,
   onClone,
+  isCloning,
+  cloneProgress,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onClone: (url: string) => void;
+  isCloning: boolean;
+  cloneProgress: string;
 }) {
   const [url, setUrl] = useState("");
 
@@ -316,41 +320,57 @@ function CloneModal({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (url.trim()) {
+    if (url.trim() && !isCloning) {
       onClone(url.trim());
-      setUrl("");
-      onClose();
     }
   };
 
   return (
-    <div className="clone-modal-overlay" onClick={onClose}>
+    <div className="clone-modal-overlay" onClick={!isCloning ? onClose : undefined}>
       <div className="clone-modal" onClick={(e) => e.stopPropagation()}>
         <div className="clone-modal-header">
           <h3>Clone Repository</h3>
-          <button className="clone-modal-close" onClick={onClose}>
-            ×
-          </button>
+          {!isCloning && (
+            <button className="clone-modal-close" onClick={onClose}>
+              ×
+            </button>
+          )}
         </div>
         <form onSubmit={handleSubmit}>
           <div className="clone-modal-body">
-            <label htmlFor="clone-url">Repository URL</label>
-            <input
-              id="clone-url"
-              type="text"
-              placeholder="https://github.com/user/repo.git"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              autoFocus
-            />
+            {!isCloning ? (
+              <>
+                <label htmlFor="clone-url">Repository URL</label>
+                <input
+                  id="clone-url"
+                  type="text"
+                  placeholder="https://github.com/user/repo.git"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  autoFocus
+                />
+              </>
+            ) : (
+              <div className="clone-progress">
+                <div className="clone-spinner" />
+                <p className="clone-progress-text">Cloning repository...</p>
+                {cloneProgress && (
+                  <p className="clone-progress-detail">{cloneProgress}</p>
+                )}
+              </div>
+            )}
           </div>
           <div className="clone-modal-footer">
-            <button type="button" className="ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="primary" disabled={!url.trim()}>
-              Clone
-            </button>
+            {!isCloning && (
+              <button type="button" className="ghost" onClick={onClose}>
+                Cancel
+              </button>
+            )}
+            {!isCloning && (
+              <button type="submit" className="primary" disabled={!url.trim()}>
+                Clone
+              </button>
+            )}
           </div>
         </form>
       </div>
@@ -379,6 +399,8 @@ export function WelcomeScreen({
   onSelectThread,
 }: WelcomeScreenProps) {
   const [showCloneModal, setShowCloneModal] = useState(false);
+  const [isCloning, setIsCloning] = useState(false);
+  const [cloneProgress, setCloneProgress] = useState("");
   const threads = useAtomValue(threadsArrayAtom);
   const codexStatus = useAtomValue(codexStatusAtom);
 
@@ -387,12 +409,38 @@ export function WelcomeScreen({
     .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
     .slice(0, 5);
 
-  const handleClone = (url: string) => {
-    if (process.env.NODE_ENV === "development") {
-      // eslint-disable-next-line no-console
-      console.log("Clone repository:", url);
+  const handleClone = async (url: string) => {
+    setIsCloning(true);
+    setCloneProgress("");
+
+    // Set up progress listener
+    const unsubscribe = window.codex?.onCloneProgress?.((payload) => {
+      setCloneProgress(payload.message);
+    });
+
+    try {
+      const result = await window.codex?.cloneRepo?.(url);
+      
+      if (result?.success) {
+        // Clone successful - the workspace is already added by main.ts
+        // Just close the modal and the user can see it in recent sessions
+        setShowCloneModal(false);
+        // Trigger a refresh by creating a new session in the cloned folder
+        if (result.path) {
+          // Store the cloned path so the app can switch to it
+          localStorage.setItem("pendingWorkspacePath", result.path);
+        }
+      } else {
+        // Show error
+        alert(`Failed to clone repository: ${result?.error || "Unknown error"}`);
+      }
+    } catch (err) {
+      alert(`Error cloning repository: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsCloning(false);
+      setCloneProgress("");
+      unsubscribe?.();
     }
-    onOpenFolder();
   };
 
   return (
@@ -512,6 +560,8 @@ export function WelcomeScreen({
         isOpen={showCloneModal}
         onClose={() => setShowCloneModal(false)}
         onClone={handleClone}
+        isCloning={isCloning}
+        cloneProgress={cloneProgress}
       />
     </div>
   );

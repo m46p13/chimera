@@ -510,6 +510,28 @@ let currentAppSessionId: number | null = null;
 let appSessionHeartbeat: NodeJS.Timeout | null = null;
 const APP_SESSION_HEARTBEAT_INTERVAL = 30000; // 30 seconds
 
+// Rate limit state
+interface RateLimitWindow {
+  used_percent: number;
+  resets_at?: number;
+  window_minutes?: number;
+}
+
+interface CreditsSnapshot {
+  has_credits: boolean;
+  unlimited: boolean;
+  balance?: string;
+}
+
+interface RateLimitSnapshot {
+  captured_at: number;
+  primary?: RateLimitWindow;
+  secondary?: RateLimitWindow;
+  credits?: CreditsSnapshot;
+}
+
+let lastRateLimits: RateLimitSnapshot | null = null;
+
 const callBrowserPanel = async <T>(method: string, ...args: unknown[]): Promise<T> => {
   if (!mainWindow) {
     throw new Error("Main window not available");
@@ -529,6 +551,13 @@ const updateStatus = (status: CodexStatus) => {
   lastStatus = status;
   if (mainWindow) {
     mainWindow.webContents.send("codex:status", status);
+  }
+};
+
+const updateRateLimits = (snapshot: RateLimitSnapshot) => {
+  lastRateLimits = snapshot;
+  if (mainWindow) {
+    mainWindow.webContents.send("codex:rateLimits", snapshot);
   }
 };
 
@@ -591,6 +620,9 @@ const setupIpc = () => {
   ipcMain.handle("app:getPath", () => app.getAppPath());
   ipcMain.handle("app:getVersion", () => app.getVersion());
 
+  // Rate limits IPC
+  ipcMain.handle("codex:rateLimits", () => lastRateLimits);
+
   ipcMain.handle("codex:request", async (_event, payload) => {
     if (!codex) {
       throw new Error("codex app-server unavailable");
@@ -652,6 +684,157 @@ const setupIpc = () => {
       return null;
     }
     return result.filePaths[0];
+  });
+
+  // Create new session folder in ~/Chimera Projects/
+  ipcMain.handle("chimera:create-new-session", async () => {
+    try {
+      const homeDir = app.getPath("home");
+      const chimeraProjectsDir = path.join(homeDir, "Chimera Projects");
+      
+      // Create Chimera Projects directory if it doesn't exist
+      await fs.promises.mkdir(chimeraProjectsDir, { recursive: true });
+      
+      // Generate timestamped folder name: session-YYYY-MM-DD-NNN
+      const now = new Date();
+      const dateStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
+      
+      // Find next available number for today
+      let sessionNum = 1;
+      let sessionPath: string;
+      do {
+        const numStr = sessionNum.toString().padStart(3, "0");
+        sessionPath = path.join(chimeraProjectsDir, `session-${dateStr}-${numStr}`);
+        try {
+          await fs.promises.access(sessionPath);
+          sessionNum++;
+        } catch {
+          // Folder doesn't exist, we can use this path
+          break;
+        }
+      } while (sessionNum < 1000);
+      
+      if (sessionNum >= 1000) {
+        return { success: false, error: "Too many sessions created today" };
+      }
+      
+      // Create the session folder
+      await fs.promises.mkdir(sessionPath, { recursive: true });
+      
+      // Add to workspaces
+      const workspace = workspaces.addWorkspace(sessionPath);
+      
+      return { success: true, path: sessionPath, workspace };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Clone repository IPC handler
+  ipcMain.handle("chimera:clone-repo", async (_event, url: string, destinationPath?: string) => {
+    if (!mainWindow) return { success: false, error: "Main window not available" };
+    if (!url || typeof url !== "string") return { success: false, error: "Invalid repository URL" };
+
+    try {
+      // Extract repo name from URL for default folder name
+      let repoName = "repo";
+      try {
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split("/").filter(Boolean);
+        if (pathParts.length > 0) {
+          repoName = pathParts[pathParts.length - 1].replace(/\.git$/, "");
+        }
+      } catch {
+        // Fallback: try to extract from git@ URLs or simple paths
+        const match = url.match(/\/([^\/]+?)(?:\.git)?$/);
+        if (match) repoName = match[1];
+      }
+
+      // If no destination provided, ask user to pick a parent folder
+      let parentFolder = destinationPath;
+      if (!parentFolder) {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          title: "Select folder to clone into",
+          defaultPath: app.getPath("home"),
+          properties: ["openDirectory", "dontAddToRecent"]
+        });
+        if (result.canceled || result.filePaths.length === 0) {
+          return { success: false, error: "Clone cancelled" };
+        }
+        parentFolder = result.filePaths[0];
+      }
+
+      // Full destination path
+      const clonePath = path.join(parentFolder, repoName);
+
+      // Check if folder already exists
+      try {
+        await fs.promises.access(clonePath);
+        return { success: false, error: `Folder "${repoName}" already exists in selected directory` };
+      } catch {
+        // Folder doesn't exist, good to proceed
+      }
+
+      // Run git clone
+      return new Promise<{ success: boolean; path?: string; workspace?: { path: string; name: string; lastOpened: number }; error?: string }>((resolve) => {
+        const gitProcess = spawn("git", ["clone", "--progress", url, clonePath], {
+          cwd: parentFolder,
+          env: { ...process.env }
+        });
+
+        let errorOutput = "";
+
+        gitProcess.stderr.on("data", (data) => {
+          const line = data.toString();
+          errorOutput += line;
+          // Send progress to renderer
+          mainWindow?.webContents.send("chimera:clone-progress", { 
+            stage: "cloning", 
+            message: line.trim() 
+          });
+        });
+
+        gitProcess.stdout.on("data", (data) => {
+          // git clone outputs progress to stderr, but capture stdout just in case
+          mainWindow?.webContents.send("chimera:clone-progress", { 
+            stage: "cloning", 
+            message: data.toString().trim() 
+          });
+        });
+
+        gitProcess.on("close", (code) => {
+          if (code === 0) {
+            // Add to workspaces
+            try {
+              const workspace = workspaces.addWorkspace(clonePath);
+              mainWindow?.webContents.send("chimera:clone-progress", { 
+                stage: "complete", 
+                message: "Repository cloned successfully" 
+              });
+              resolve({ success: true, path: clonePath, workspace });
+            } catch (err) {
+              resolve({ success: true, path: clonePath, error: "Cloned but failed to add workspace" });
+            }
+          } else {
+            resolve({ success: false, error: `Git clone failed (exit code ${code}): ${errorOutput || "Unknown error"}` });
+          }
+        });
+
+        gitProcess.on("error", (err) => {
+          resolve({ success: false, error: `Failed to start git: ${err.message}` });
+        });
+      });
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("chimera:clone-progress:on", (_event, handler: (payload: { stage: string; message: string }) => void) => {
+    const listener = (_event: Electron.IpcMainEvent, payload: { stage: string; message: string }) => {
+      handler(payload);
+    };
+    ipcMain.on("chimera:clone-progress", listener);
+    return () => ipcMain.removeListener("chimera:clone-progress", listener);
   });
 
   // Workspace IPC handlers
@@ -1446,6 +1629,12 @@ const bootCodex = async () => {
 
   codex = new CodexAppServer(
     (notification) => {
+      // Handle rate limit notifications from Codex CLI
+      if (notification.method === "rateLimits/updated" && notification.params) {
+        const snapshot = notification.params as RateLimitSnapshot;
+        updateRateLimits(snapshot);
+      }
+      // Forward all notifications to renderer
       mainWindow?.webContents.send("codex:notification", notification);
     },
     handleCodexRequest,

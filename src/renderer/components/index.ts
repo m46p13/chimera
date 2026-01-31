@@ -11,3 +11,4 @@ export * from "./WorkspaceSwitcher";
 export * from "./WelcomeScreen";
 export * from "./UpdateNotification";
 export * from "./Settings";
+export * from "./RateLimitDisplay";
