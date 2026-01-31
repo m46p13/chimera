@@ -1,6 +1,6 @@
 {
   "name": "chimera",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Chimera — a Codex GUI",
   "main": "dist/main/main.js",
@@ -13,8 +13,8 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "preview": "vite preview",
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f",
+    "rebuild": "electron-rebuild -f",
     "mcp:browser": "npx tsx src/mcp/browser-server.ts",
     "dist": "pnpm build && electron-builder",
     "dist:mac": "pnpm build && electron-builder --mac"
@@ -29,7 +29,9 @@
     "files": [
       "dist/**/*",
       "browser-cli.sh",
-      "src/mcp/**/*"
+      "src/mcp/**/*",
+      "node_modules/node-pty/**/*",
+      "node_modules/better-sqlite3/**/*"
     ],
     "asarUnpack": [
       "**/*.node",
@@ -99,5 +101,12 @@
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "node-pty",
+      "electron"
+    ]
   }
 }
