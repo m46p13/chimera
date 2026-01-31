@@ -5,9 +5,16 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
   // Configure logging
   autoUpdater.logger = console;
   
+  // Enable debug logging for electron-updater
+  process.env.DEBUG = 'electron-updater';
+  
   // Auto-download in background - no UI during download
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
+  
+  // Log the feed URL for debugging
+  console.log('[Updater] Current version:', autoUpdater.currentVersion);
+  console.log('[Updater] Update config path:', (autoUpdater as any).updateInfoPath || 'default');
 
   // Events
   autoUpdater.on('checking-for-update', () => {
@@ -43,6 +50,12 @@ export function setupAutoUpdater(mainWindow: BrowserWindow) {
   });
 
   autoUpdater.on('error', (err) => {
+    console.error('[Updater] Error details:', err);
+    console.error('[Updater] Error stack:', err.stack);
+    // Log additional context if available
+    if ((err as any).statusCode) {
+      console.error('[Updater] HTTP status code:', (err as any).statusCode);
+    }
     mainWindow.webContents.send('updater:status', { 
       status: 'error', 
       error: err.message 

@@ -56,7 +56,9 @@
     "publish": {
       "provider": "github",
       "owner": "m46p13",
-      "repo": "chimera"
+      "repo": "chimera",
+      "private": false,
+      "releaseType": "release"
     }
   },
   "dependencies": {
