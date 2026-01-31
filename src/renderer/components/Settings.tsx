@@ -283,7 +283,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
       // Try to get app version
       try {
-        const version = await window.codex?.getAppVersion?.();
+        const version = await window.codex?.getVersion?.();
         if (version) setAppVersion(version);
       } catch {
         // Use default
@@ -294,6 +294,25 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
     loadConfig();
   }, [isOpen, setStartOnLogin, setCheckForUpdates, setLanguage]);
+
+  // Listen for update status
+  useEffect(() => {
+    const cleanup = window.codex?.updater?.onStatus?.((status) => {
+      setCheckingUpdate(false);
+      if (status.status === "available") {
+        alert(`Update available: v${status.version}\n\nClick "Check for Updates" to download.`);
+      } else if (status.status === "up-to-date") {
+        alert("You're running the latest version.");
+      } else if (status.status === "ready") {
+        if (confirm(`Update v${status.version} is ready. Restart now to install?`)) {
+          window.codex?.updater?.install?.();
+        }
+      } else if (status.status === "error") {
+        alert(`Update error: ${status.error || "Unknown error"}`);
+      }
+    });
+    return () => cleanup?.();
+  }, []);
 
   // Handle keyboard navigation
   useEffect(() => {
@@ -373,18 +392,12 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   const handleCheckUpdate = async () => {
     setCheckingUpdate(true);
     try {
-      const result = (await window.codex?.request?.("app/checkUpdate", {})) as { hasUpdate?: boolean; version?: string; releaseNotes?: string } | undefined;
-      if (result?.hasUpdate) {
-        alert(`Update available: ${result.version}\n${result.releaseNotes || ""}`);
-      } else {
-        alert("You're running the latest version.");
-      }
+      // Use electron-updater via preload API
+      await window.codex?.updater?.check?.();
+      // Status will come through the updater:status event
+      setTimeout(() => setCheckingUpdate(false), 3000);
     } catch {
-      // Fallback
-      setTimeout(() => {
-        alert("You're running the latest version.");
-      }, 500);
-    } finally {
+      alert("Failed to check for updates.");
       setCheckingUpdate(false);
     }
   };
@@ -841,7 +854,6 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                       </div>
                       <h3 className="about-name">Chimera</h3>
                       <p className="about-version">Version {appVersion}</p>
-                      <p className="about-tagline">AI-powered coding assistant</p>
 
                       <div className="about-actions">
                         <button

@@ -586,6 +586,7 @@ const setupIpc = () => {
   ipcMain.handle("codex:status", () => lastStatus);
 
   ipcMain.handle("app:getPath", () => app.getAppPath());
+  ipcMain.handle("app:getVersion", () => app.getVersion());
 
   ipcMain.handle("codex:request", async (_event, payload) => {
     if (!codex) {

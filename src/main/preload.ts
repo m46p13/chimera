@@ -184,6 +184,7 @@ const api = {
 
   // App path API
   getAppPath: () => ipcRenderer.invoke("app:getPath"),
+  getVersion: () => ipcRenderer.invoke("app:getVersion"),
 
   // Updater API
   updater: {
