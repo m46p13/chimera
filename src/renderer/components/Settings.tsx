@@ -301,20 +301,19 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const cleanup = window.codex?.updater?.onStatus?.((status) => {
       setCheckingUpdate(false);
       if (status.status === "available") {
-        setUpdateMessage({ type: "success", text: `Update v${status.version} available! Click again to download.` });
-        // Auto-start download
+        // Silently start download - no message yet
+        setUpdateMessage({ type: "info", text: "Downloading update..." });
         window.codex?.updater?.download?.();
       } else if (status.status === "up-to-date") {
         setUpdateMessage({ type: "info", text: "You're running the latest version." });
+        setTimeout(() => setUpdateMessage(null), 3000);
       } else if (status.status === "downloading") {
-        setUpdateMessage({ type: "info", text: `Downloading... ${Math.round(status.percent || 0)}%` });
+        const percent = Math.round(status.percent || 0);
+        setUpdateMessage({ type: "info", text: `Downloading update... ${percent}%` });
       } else if (status.status === "ready") {
-        setUpdateMessage({ type: "success", text: `Update v${status.version} ready! Click to restart.` });
+        setUpdateMessage({ type: "success", text: `v${status.version} ready to install` });
       } else if (status.status === "error") {
-        setUpdateMessage({ type: "error", text: `Update error: ${status.error || "Unknown"}` });
-      }
-      // Clear message after 5 seconds (except for ready state)
-      if (status.status !== "ready" && status.status !== "downloading") {
+        setUpdateMessage({ type: "error", text: `Update failed: ${status.error || "Unknown error"}` });
         setTimeout(() => setUpdateMessage(null), 5000);
       }
     });
