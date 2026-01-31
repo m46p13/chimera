@@ -3926,18 +3926,10 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-brand-mark {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  border: 1px solid var(--accent-primary);
+  width: 80px;
+  height: 80px;
   display: grid;
   place-items: center;
-  color: var(--accent-primary);
-  background: var(--bg-secondary);
-  box-shadow: 
-    0 4px 16px var(--shadow-color),
-    0 0 0 1px var(--accent-soft),
-    inset 0 1px 0 rgba(255,255,255,0.05);
   transition: all 0.3s ease;
 }
 
@@ -3947,18 +3939,14 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-logo {
-  width: 40px;
-  height: 40px;
+  width: 80px;
+  height: 80px;
   object-fit: contain;
-  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
 }
 
 .welcome-brand:hover .welcome-brand-mark {
-  box-shadow: 
-    0 6px 24px var(--shadow-color),
-    0 0 0 2px var(--accent-primary),
-    inset 0 1px 0 rgba(255,255,255,0.1);
-  transform: translateY(-2px);
+  transform: translateY(-2px) scale(1.05);
 }
 
 .welcome-brand-title {
