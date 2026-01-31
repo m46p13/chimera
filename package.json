@@ -1,6 +1,6 @@
 {
   "name": "chimera",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Chimera — a Codex GUI",
   "main": "dist/main/main.js",
@@ -31,6 +31,11 @@
       "browser-cli.sh",
       "src/mcp/**/*"
     ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/node_modules/node-pty/**/*",
+      "**/node_modules/better-sqlite3/**/*"
+    ],
     "mac": {
       "target": [
         "dmg",
@@ -47,7 +52,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "OWNER",
+      "owner": "m46p13",
       "repo": "chimera"
     }
   },
@@ -75,6 +80,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^9.0.1",
+    "node-pty": "^1.1.0",
     "remark-gfm": "^4.0.0"
   },
   "devDependencies": {
@@ -90,7 +96,6 @@
     "electron": "^35.7.5",
     "electron-builder": "^26.4.0",
     "electronmon": "^2.0.2",
-    "node-pty": "^1.1.0",
     "typescript": "^5.7.3",
     "vite": "^6.1.0",
     "wait-on": "^8.0.2"
