@@ -262,15 +262,10 @@ export function WelcomeScreen({
         <div className="welcome-hero">
           <div className="welcome-brand">
             <div className="welcome-brand-mark">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
+              <img src="./icon.png" alt="Chimera" className="welcome-logo" />
             </div>
             <h1 className="welcome-brand-title">CHIMERA</h1>
           </div>
-          <p className="welcome-tagline">AI-powered coding assistant</p>
         </div>
 
         {/* Quick Actions */}

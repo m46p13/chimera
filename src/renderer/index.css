@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Orbitron:wght@500;600;700;800;900&display=swap");
 
 /* Theme CSS Variables */
 :root {
@@ -3946,6 +3946,13 @@ html.theme-dark .diff-line-remove {
   height: 28px;
 }
 
+.welcome-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
 .welcome-brand:hover .welcome-brand-mark {
   box-shadow: 
     0 6px 24px var(--shadow-color),
@@ -3955,15 +3962,18 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-brand-title {
-  font-size: 42px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
+  font-size: 48px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
   margin: 0;
-  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-primary) 100%);
+  font-family: "Orbitron", sans-serif;
+  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-primary) 50%, var(--accent-hover) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
+  text-transform: uppercase;
+  filter: drop-shadow(0 2px 4px var(--shadow-color));
 }
 
 .welcome-tagline {

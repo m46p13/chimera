@@ -476,7 +476,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                           </div>
                           <div className="setting-info">
                             <label className="setting-label">Language</label>
-                            <span className="setting-desc">Interface language</span>
+                            <span className="setting-desc">Interface language (coming soon)</span>
                           </div>
                         </div>
                         <select
@@ -867,7 +867,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                     <div className="settings-cards">
                       <div className="setting-card link-card">
                         <a
-                          href="https://github.com/openai/chimera"
+                          href="https://github.com/m46p13/chimera"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="link-item"
@@ -882,7 +882,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
                       <div className="setting-card link-card">
                         <a
-                          href="https://platform.openai.com/docs"
+                          href="https://github.com/m46p13/chimera#readme"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="link-item"
@@ -897,7 +897,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
                       <div className="setting-card link-card">
                         <a
-                          href="https://github.com/openai/chimera/issues"
+                          href="https://github.com/m46p13/chimera/issues"
                           target="_blank"
                           rel="noopener noreferrer"
                           className="link-item"
@@ -912,8 +912,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                     </div>
 
                     <div className="credits">
-                      <p>Built with ❤️ by the OpenAI team</p>
-                      <p className="copyright">© {new Date().getFullYear()} OpenAI. All rights reserved.</p>
+                      <p>Built with ❤️ by Jaya Surya Kommireddy</p>
+                      <p className="copyright">© {new Date().getFullYear()} Jaya Surya Kommireddy</p>
                     </div>
                   </section>
                 )}

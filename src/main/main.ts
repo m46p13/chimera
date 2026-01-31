@@ -307,9 +307,51 @@ class CodexAppServer {
 
     this.onStatus({ state: "starting" });
 
+    // Get the user's shell PATH to ensure codex can be found
+    // This is necessary because packaged Electron apps don't inherit shell env
+    let userPath = process.env.PATH || "";
+    try {
+      const { execSync } = await import("child_process");
+      const shellPath = execSync(
+        process.platform === "darwin" 
+          ? "source ~/.zshrc 2>/dev/null || source ~/.bash_profile 2>/dev/null || true; echo $PATH"
+          : "source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null || true; echo $PATH",
+        { shell: "/bin/bash", encoding: "utf-8" }
+      ).trim();
+      if (shellPath) {
+        userPath = shellPath;
+      }
+    } catch {
+      // Fallback to common paths if shell detection fails
+      const commonPaths = [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        `${os.homedir()}/.nvm/versions/node/v22.14.0/bin`,
+        `${os.homedir()}/.local/bin`,
+        `${os.homedir()}/.npm-global/bin`,
+        `${os.homedir()}/.yarn/bin`,
+        `${os.homedir()}/node_modules/.bin`,
+      ];
+      userPath = commonPaths.join(":") + (userPath ? ":" + userPath : "");
+    }
+
+    const env = {
+      ...process.env,
+      PATH: userPath,
+    };
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[Codex] Starting with PATH:", userPath.substring(0, 200) + "...");
+    }
+
     this.proc = spawn("codex", ["app-server"], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: process.env
+      env,
+      shell: false,
     });
 
     this.proc.on("error", (err) => {
