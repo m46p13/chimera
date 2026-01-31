@@ -775,6 +775,11 @@ const setupIpc = () => {
     return db.getActivity(threadId, limit);
   });
 
+  // Usage stats
+  ipcMain.handle("db:stats:get", () => {
+    return db.getUsageStats();
+  });
+
   // Browser automation IPC handlers
   ipcMain.handle("browser:navigate", async (_event, url: string) => {
     if (typeof url !== "string") {

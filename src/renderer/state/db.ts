@@ -181,6 +181,27 @@ export const dbExport = async () => {
   return getDb().export();
 };
 
+// Usage stats types
+export type UsageStats = {
+  sessionsThisWeek: number;
+  totalSessions: number;
+  totalMessages: number;
+  userMessages: number;
+  assistantMessages: number;
+  totalFileChanges: number;
+  totalActivities: number;
+  timeSpentMinutes: number;
+  mostActiveDay: string | null;
+  mostActiveDayCount: number;
+};
+
+// Stats API
+export const dbStats = {
+  get: async (): Promise<UsageStats> => {
+    return getDb().stats();
+  },
+};
+
 // Workspace files API
 export const dbWorkspaceFiles = {
   save: async (workspaceId: string, files: { file_path: string; is_active: number; position: number }[]): Promise<void> => {

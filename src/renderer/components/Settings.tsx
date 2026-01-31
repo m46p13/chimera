@@ -241,6 +241,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [appVersion, setAppVersion] = useState("0.1.0");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [updateMessage, setUpdateMessage] = useState<{ type: "info" | "success" | "error"; text: string } | null>(null);
 
   // Atoms
   const [theme, setTheme] = useAtom(themeAtom);
@@ -300,15 +301,21 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     const cleanup = window.codex?.updater?.onStatus?.((status) => {
       setCheckingUpdate(false);
       if (status.status === "available") {
-        alert(`Update available: v${status.version}\n\nClick "Check for Updates" to download.`);
+        setUpdateMessage({ type: "success", text: `Update v${status.version} available! Click again to download.` });
+        // Auto-start download
+        window.codex?.updater?.download?.();
       } else if (status.status === "up-to-date") {
-        alert("You're running the latest version.");
+        setUpdateMessage({ type: "info", text: "You're running the latest version." });
+      } else if (status.status === "downloading") {
+        setUpdateMessage({ type: "info", text: `Downloading... ${Math.round(status.percent || 0)}%` });
       } else if (status.status === "ready") {
-        if (confirm(`Update v${status.version} is ready. Restart now to install?`)) {
-          window.codex?.updater?.install?.();
-        }
+        setUpdateMessage({ type: "success", text: `Update v${status.version} ready! Click to restart.` });
       } else if (status.status === "error") {
-        alert(`Update error: ${status.error || "Unknown error"}`);
+        setUpdateMessage({ type: "error", text: `Update error: ${status.error || "Unknown"}` });
+      }
+      // Clear message after 5 seconds (except for ready state)
+      if (status.status !== "ready" && status.status !== "downloading") {
+        setTimeout(() => setUpdateMessage(null), 5000);
       }
     });
     return () => cleanup?.();
@@ -858,13 +865,18 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                       <div className="about-actions">
                         <button
                           className="btn primary"
-                          onClick={handleCheckUpdate}
+                          onClick={updateMessage?.text.includes("ready") ? () => window.codex?.updater?.install?.() : handleCheckUpdate}
                           disabled={checkingUpdate}
                         >
                           {checkingUpdate ? (
                             <>
                               <span className="spinner small" />
                               Checking...
+                            </>
+                          ) : updateMessage?.text.includes("ready") ? (
+                            <>
+                              <RefreshIcon className="btn-icon" />
+                              Restart to Update
                             </>
                           ) : (
                             <>
@@ -873,6 +885,11 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                             </>
                           )}
                         </button>
+                        {updateMessage && (
+                          <div className={`update-message ${updateMessage.type}`}>
+                            {updateMessage.text}
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1601,8 +1618,32 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
         .about-actions {
           display: flex;
-          justify-content: center;
+          flex-direction: column;
+          align-items: center;
           gap: 12px;
+        }
+
+        .update-message {
+          font-size: 13px;
+          padding: 8px 16px;
+          border-radius: 6px;
+          text-align: center;
+          max-width: 280px;
+        }
+
+        .update-message.info {
+          background: var(--bg-tertiary);
+          color: var(--text-secondary);
+        }
+
+        .update-message.success {
+          background: rgba(34, 197, 94, 0.15);
+          color: #22c55e;
+        }
+
+        .update-message.error {
+          background: rgba(239, 68, 68, 0.15);
+          color: #ef4444;
         }
 
         /* Link Cards */

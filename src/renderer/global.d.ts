@@ -224,6 +224,20 @@ type McpToolResult = {
   isError?: boolean;
 };
 
+// Usage stats types
+type UsageStats = {
+  sessionsThisWeek: number;
+  totalSessions: number;
+  totalMessages: number;
+  userMessages: number;
+  assistantMessages: number;
+  totalFileChanges: number;
+  totalActivities: number;
+  timeSpentMinutes: number;
+  mostActiveDay: string | null;
+  mostActiveDayCount: number;
+};
+
 declare global {
   interface Window {
     codex?: {
@@ -285,6 +299,7 @@ declare global {
           load: (workspaceId: string) => Promise<DbWorkspaceFile[]>;
           clear: (workspaceId: string) => Promise<boolean>;
         };
+        stats: () => Promise<UsageStats>;
       };
 
       // File system API

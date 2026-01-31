@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAtomValue } from "jotai";
 import type { ThreadSummary } from "../state/types";
 import { threadsArrayAtom } from "../state/atoms/threads";
 import { codexStatusAtom } from "../state/atoms/settings";
+import { dbStats, type UsageStats } from "../state/db";
 
 interface WelcomeScreenProps {
   onOpenFolder: () => void;
@@ -51,6 +52,46 @@ function ProjectIcon({ className }: { className?: string }) {
   );
 }
 
+function SessionIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function MessageIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
+  );
+}
+
+function FileIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
+  );
+}
+
 // Format time relative (e.g., "2h ago", "Yesterday", etc.)
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
@@ -66,6 +107,15 @@ function formatRelativeTime(timestamp: number): string {
   if (days === 1) return "Yesterday";
   if (days < 7) return `${days} days ago`;
   return new Date(timestamp * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+// Format minutes to hours and minutes
+function formatTime(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (mins === 0) return `${hours}h`;
+  return `${hours}h ${mins}m`;
 }
 
 // Quick Action Card Component
@@ -88,6 +138,98 @@ function QuickActionCard({
         <div className="quick-action-desc">{description}</div>
       </div>
     </button>
+  );
+}
+
+// Stat Card Component
+function StatCard({
+  icon,
+  value,
+  label,
+  subtext,
+}: {
+  icon: React.ReactNode;
+  value: string | number;
+  label: string;
+  subtext?: string;
+}) {
+  return (
+    <div className="stat-card">
+      <div className="stat-icon">{icon}</div>
+      <div className="stat-content">
+        <div className="stat-value">{value}</div>
+        <div className="stat-label">{label}</div>
+        {subtext && <div className="stat-subtext">{subtext}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Usage Stats Section Component
+function UsageStatsSection() {
+  const [stats, setStats] = useState<UsageStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const loadStats = async () => {
+      try {
+        const data = await dbStats.get();
+        setStats(data);
+      } catch (err) {
+        console.error("Failed to load usage stats:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadStats();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="welcome-section welcome-section--compact">
+        <h2 className="welcome-section-title">This Week</h2>
+        <div className="stats-grid stats-grid--loading">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="stat-card stat-card--skeleton" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!stats || stats.totalSessions === 0) {
+    return null;
+  }
+
+  return (
+    <div className="welcome-section welcome-section--compact">
+      <h2 className="welcome-section-title">This Week</h2>
+      <div className="stats-grid">
+        <StatCard
+          icon={<SessionIcon className="stat-svg" />}
+          value={stats.sessionsThisWeek}
+          label="Sessions"
+          subtext={`${stats.totalSessions} total`}
+        />
+        <StatCard
+          icon={<MessageIcon className="stat-svg" />}
+          value={stats.totalMessages}
+          label="Messages"
+          subtext={`${stats.userMessages} sent`}
+        />
+        <StatCard
+          icon={<ClockIcon className="stat-svg" />}
+          value={formatTime(stats.timeSpentMinutes)}
+          label="Coding time"
+        />
+        <StatCard
+          icon={<FileIcon className="stat-svg" />}
+          value={stats.totalFileChanges}
+          label="Files changed"
+        />
+      </div>
+    </div>
   );
 }
 
@@ -267,6 +409,9 @@ export function WelcomeScreen({
             <h1 className="welcome-brand-title">CHIMERA</h1>
           </div>
         </div>
+
+        {/* Usage Stats */}
+        <UsageStatsSection />
 
         {/* Quick Actions */}
         <div className="welcome-section">

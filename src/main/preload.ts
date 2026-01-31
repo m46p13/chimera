@@ -111,6 +111,8 @@ const api = {
     },
     // Export
     export: () => ipcRenderer.invoke("db:export"),
+    // Stats
+    stats: () => ipcRenderer.invoke("db:stats:get"),
     // Workspace files
     workspaceFiles: {
       save: (workspaceId: string, files: { file_path: string; is_active: number; position: number }[]) =>

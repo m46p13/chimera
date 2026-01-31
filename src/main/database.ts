@@ -365,3 +365,83 @@ export const exportData = (): { settings: Record<string, string>; threads: DbThr
     messages: getDatabase().prepare("SELECT * FROM messages ORDER BY created_at ASC").all() as DbMessage[],
   };
 };
+
+// Usage statistics
+export type UsageStats = {
+  sessionsThisWeek: number;
+  totalSessions: number;
+  totalMessages: number;
+  userMessages: number;
+  assistantMessages: number;
+  totalFileChanges: number;
+  totalActivities: number;
+  timeSpentMinutes: number;
+  mostActiveDay: string | null;
+  mostActiveDayCount: number;
+};
+
+export const getUsageStats = (): UsageStats => {
+  const database = getDatabase();
+  const now = Math.floor(Date.now() / 1000);
+  const oneWeekAgo = now - 7 * 24 * 60 * 60;
+
+  // Sessions this week
+  const sessionsThisWeek = database.prepare(
+    "SELECT COUNT(*) as count FROM threads WHERE created_at >= ?"
+  ).get(oneWeekAgo) as { count: number };
+
+  // Total sessions
+  const totalSessions = database.prepare(
+    "SELECT COUNT(*) as count FROM threads"
+  ).get() as { count: number };
+
+  // Total messages breakdown
+  const totalMessages = database.prepare(
+    "SELECT COUNT(*) as count FROM messages"
+  ).get() as { count: number };
+
+  const userMessages = database.prepare(
+    "SELECT COUNT(*) as count FROM messages WHERE role = 'user'"
+  ).get() as { count: number };
+
+  const assistantMessages = database.prepare(
+    "SELECT COUNT(*) as count FROM messages WHERE role = 'assistant'"
+  ).get() as { count: number };
+
+  // Total file changes
+  const totalFileChanges = database.prepare(
+    "SELECT COUNT(*) as count FROM file_changes"
+  ).get() as { count: number };
+
+  // Total activities (excluding thinking for cleaner count)
+  const totalActivities = database.prepare(
+    "SELECT COUNT(*) as count FROM activity WHERE kind != 'thinking'"
+  ).get() as { count: number };
+
+  // Estimate time spent based on activity (rough estimate: 2 minutes per message)
+  const timeSpentMinutes = Math.round(totalMessages.count * 2);
+
+  // Most active day
+  const mostActiveDay = database.prepare(`
+    SELECT 
+      DATE(created_at, 'unixepoch') as day,
+      COUNT(*) as count
+    FROM messages
+    GROUP BY day
+    ORDER BY count DESC
+    LIMIT 1
+  `).get() as { day: string; count: number } | undefined;
+
+  return {
+    sessionsThisWeek: sessionsThisWeek.count,
+    totalSessions: totalSessions.count,
+    totalMessages: totalMessages.count,
+    userMessages: userMessages.count,
+    assistantMessages: assistantMessages.count,
+    totalFileChanges: totalFileChanges.count,
+    totalActivities: totalActivities.count,
+    timeSpentMinutes,
+    mostActiveDay: mostActiveDay?.day ?? null,
+    mostActiveDayCount: mostActiveDay?.count ?? 0,
+  };
+};
