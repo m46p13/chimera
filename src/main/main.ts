@@ -777,14 +777,23 @@ const setupIpc = () => {
 
       // Run git clone
       return new Promise<{ success: boolean; path?: string; workspace?: { path: string; name: string; lastOpened: number }; error?: string }>((resolve) => {
-        const gitProcess = spawn("git", ["clone", "--progress", url, clonePath], {
-          cwd: parentFolder,
-          env: { ...process.env }
-        });
+        let gitProcess: ReturnType<typeof spawn>;
+        
+        try {
+          gitProcess = spawn("git", ["clone", "--progress", url, clonePath], {
+            cwd: parentFolder,
+            env: { ...process.env }
+          });
+        } catch (err) {
+          // Synchronous error from spawn (e.g., git not found in PATH)
+          const message = err instanceof Error ? err.message : String(err);
+          resolve({ success: false, error: `Failed to start git: ${message}. Is git installed and in your PATH?` });
+          return;
+        }
 
         let errorOutput = "";
 
-        gitProcess.stderr.on("data", (data) => {
+        gitProcess.stderr?.on("data", (data) => {
           const line = data.toString();
           errorOutput += line;
           // Send progress to renderer
@@ -794,7 +803,7 @@ const setupIpc = () => {
           });
         });
 
-        gitProcess.stdout.on("data", (data) => {
+        gitProcess.stdout?.on("data", (data) => {
           // git clone outputs progress to stderr, but capture stdout just in case
           mainWindow?.webContents.send("chimera:clone-progress", { 
             stage: "cloning", 
@@ -821,20 +830,12 @@ const setupIpc = () => {
         });
 
         gitProcess.on("error", (err) => {
-          resolve({ success: false, error: `Failed to start git: ${err.message}` });
+          resolve({ success: false, error: `Git clone error: ${err.message}` });
         });
       });
     } catch (err) {
       return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-  });
-
-  ipcMain.handle("chimera:clone-progress:on", (_event, handler: (payload: { stage: string; message: string }) => void) => {
-    const listener = (_event: Electron.IpcMainEvent, payload: { stage: string; message: string }) => {
-      handler(payload);
-    };
-    ipcMain.on("chimera:clone-progress", listener);
-    return () => ipcMain.removeListener("chimera:clone-progress", listener);
   });
 
   // Workspace IPC handlers
