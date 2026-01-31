@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e1b4b"/>
+      <stop offset="100%" style="stop-color:#312e81"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fbbf24"/>
+      <stop offset="100%" style="stop-color:#f59e0b"/>
+    </linearGradient>
+    <linearGradient id="mane" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#dc2626"/>
+      <stop offset="100%" style="stop-color:#991b1b"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect x="32" y="32" width="448" height="448" rx="96" fill="url(#bg)"/>
+  
+  <!-- Lion Mane (stylized flames) -->
+  <g fill="url(#mane)">
+    <ellipse cx="256" cy="290" rx="140" ry="120"/>
+    <path d="M116 250 Q100 200 130 160 Q160 200 150 250" />
+    <path d="M396 250 Q412 200 382 160 Q352 200 362 250" />
+    <path d="M150 180 Q140 130 180 100 Q200 150 190 190" />
+    <path d="M362 180 Q372 130 332 100 Q312 150 322 190" />
+    <path d="M200 140 Q200 90 240 70 Q250 120 240 160" />
+    <path d="M312 140 Q312 90 272 70 Q262 120 272 160" />
+    <path d="M256 120 Q256 60 256 60 Q256 60 256 120" />
+  </g>
+  
+  <!-- Lion Face -->
+  <ellipse cx="256" cy="280" rx="100" ry="90" fill="url(#gold)"/>
+  
+  <!-- Goat Horns (curved, iconic) -->
+  <g fill="none" stroke="#a1a1aa" stroke-width="16" stroke-linecap="round">
+    <path d="M180 200 Q140 140 160 80 Q180 100 190 130"/>
+    <path d="M332 200 Q372 140 352 80 Q332 100 322 130"/>
+  </g>
+  
+  <!-- Lion Eyes -->
+  <g>
+    <ellipse cx="220" cy="260" rx="22" ry="26" fill="#1e1b4b"/>
+    <ellipse cx="292" cy="260" rx="22" ry="26" fill="#1e1b4b"/>
+    <circle cx="224" cy="256" r="10" fill="#22d3ee"/>
+    <circle cx="296" cy="256" r="10" fill="#22d3ee"/>
+    <circle cx="226" cy="254" r="4" fill="white"/>
+    <circle cx="298" cy="254" r="4" fill="white"/>
+  </g>
+  
+  <!-- Lion Nose -->
+  <path d="M256 295 L244 320 L256 315 L268 320 Z" fill="#92400e"/>
+  
+  <!-- Lion Mouth/Snout lines -->
+  <g stroke="#92400e" stroke-width="3" fill="none">
+    <path d="M256 315 L256 340"/>
+    <path d="M256 340 Q240 355 225 345"/>
+    <path d="M256 340 Q272 355 287 345"/>
+  </g>
+  
+  <!-- Serpent Tail (stylized, curving from side) -->
+  <g fill="none" stroke="#10b981" stroke-width="14" stroke-linecap="round">
+    <path d="M380 350 Q420 380 430 420 Q440 460 400 470 Q360 475 350 440"/>
+  </g>
+  <circle cx="350" cy="432" r="10" fill="#10b981"/>
+  <ellipse cx="346" cy="428" rx="3" ry="4" fill="#1e1b4b"/>
+  
+</svg>

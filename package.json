@@ -1,0 +1,98 @@
+{
+  "name": "chimera",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Chimera — a Codex GUI",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"pnpm:dev:renderer\" \"pnpm:dev:main\" \"pnpm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:main": "tsc -p tsconfig.main.json --watch",
+    "dev:electron": "wait-on tcp:3456 dist/main/main.js dist/main/preload.js && cross-env VITE_DEV_SERVER_URL=http://localhost:3456 electronmon .",
+    "build": "pnpm build:main && pnpm build:renderer",
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "vite build",
+    "preview": "vite preview",
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "mcp:browser": "npx tsx src/mcp/browser-server.ts",
+    "dist": "pnpm build && electron-builder",
+    "dist:mac": "pnpm build && electron-builder --mac"
+  },
+  "build": {
+    "appId": "com.chimera.app",
+    "productName": "Chimera",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "browser-cli.sh",
+      "src/mcp/**/*"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns"
+    },
+    "extraResources": [
+      {
+        "from": "browser-cli.sh",
+        "to": "browser-cli.sh"
+      }
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "OWNER",
+      "repo": "chimera"
+    }
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.1",
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-html": "^6.4.11",
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.12.1",
+    "@codemirror/state": "^6.5.4",
+    "@codemirror/theme-one-dark": "^6.1.3",
+    "@codemirror/view": "^6.39.11",
+    "@modelcontextprotocol/sdk": "^1.25.3",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
+    "better-sqlite3": "^12.6.2",
+    "diff": "^8.0.3",
+    "electron-updater": "^6.7.3",
+    "highlight.js": "^11.11.1",
+    "jotai": "^2.12.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/diff": "^8.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^35.7.5",
+    "electron-builder": "^26.4.0",
+    "electronmon": "^2.0.2",
+    "node-pty": "^1.1.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "wait-on": "^8.0.2"
+  }
+}
