@@ -4,6 +4,7 @@ import type { ThreadSummary } from "../state/types";
 import { threadsArrayAtom } from "../state/atoms/threads";
 import { codexStatusAtom } from "../state/atoms/settings";
 import { dbStats, type UsageStats } from "../state/db";
+import { RateLimitDisplay } from "./RateLimitDisplay";
 
 interface WelcomeScreenProps {
   onOpenFolder: () => void;
@@ -410,6 +411,9 @@ export function WelcomeScreen({
             <h1 className="welcome-brand-title">CHIMERA</h1>
           </div>
         </div>
+
+        {/* Rate Limits */}
+        <RateLimitDisplay />
 
         {/* Quick Actions */}
         <div className="welcome-section">

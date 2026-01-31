@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Orbitron:wght@500;600;700;800;900&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Inter:wght@400;500;600;700;800;900&display=swap");
 
 /* Theme CSS Variables */
 :root {
@@ -3926,8 +3926,8 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-brand-mark {
-  width: 80px;
-  height: 80px;
+  width: 140px;
+  height: 140px;
   display: grid;
   place-items: center;
   transition: all 0.3s ease;
@@ -3939,10 +3939,18 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-logo {
-  width: 80px;
-  height: 80px;
+  width: 140px;
+  height: 140px;
   object-fit: contain;
-  filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.5));
+  /* Invert white to black, add opacity for watermark effect */
+  filter: invert(1) opacity(0.08);
+  mix-blend-mode: multiply;
+}
+
+/* Dark theme: adjust blend mode for better visibility on dark bg */
+html.theme-dark .welcome-logo {
+  filter: invert(1) opacity(0.12);
+  mix-blend-mode: screen;
 }
 
 .welcome-brand:hover .welcome-brand-mark {
@@ -3950,18 +3958,13 @@ html.theme-dark .diff-line-remove {
 }
 
 .welcome-brand-title {
-  font-size: 48px;
+  font-size: 52px;
   font-weight: 800;
-  letter-spacing: 0.18em;
+  letter-spacing: 0.35em;
   margin: 0;
-  font-family: "Orbitron", sans-serif;
-  background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-primary) 50%, var(--accent-hover) 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
-  color: transparent;
+  font-family: "Inter", system-ui, sans-serif;
+  color: var(--text-primary);
   text-transform: uppercase;
-  filter: drop-shadow(0 2px 4px var(--shadow-color));
 }
 
 .welcome-tagline {
@@ -4626,4 +4629,135 @@ html.theme-dark .diff-line-remove {
 .window-inactive .thinking-shimmer,
 .window-inactive .streaming-indicator .dot {
   animation-play-state: paused;
+}
+
+/* ============================================
+   Rate Limit Display
+   ============================================ */
+
+.rate-limit-display {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin: 0 0 24px;
+  max-width: 420px;
+}
+
+.rate-limit-display.rate-limit-stale {
+  opacity: 0.7;
+  border-color: var(--text-tertiary);
+}
+
+.rate-limit-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.rate-limit-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.rate-limit-stale-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--warning);
+  background: var(--warning);
+  background-opacity: 0.15;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.rate-limit-captured {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.rate-limit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rate-limit-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rate-limit-row-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rate-limit-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.rate-limit-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.rate-limit-credits {
+  color: var(--success);
+}
+
+.rate-limit-row-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rate-limit-bar {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.rate-limit-bar-filled {
+  color: inherit;
+}
+
+.rate-limit-bar-empty {
+  color: var(--text-tertiary);
+  opacity: 0.4;
+}
+
+.rate-limit-reset {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+/* Dark theme adjustments */
+html.theme-dark .rate-limit-display {
+  background: var(--bg-tertiary);
+}
+
+html.theme-dark .rate-limit-bar-empty {
+  opacity: 0.3;
+}
+
+/* Position in welcome screen - after hero, before quick actions */
+.welcome-hero + .rate-limit-display {
+  margin-top: -8px;
 }
