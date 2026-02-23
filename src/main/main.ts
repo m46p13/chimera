@@ -10,10 +10,164 @@ import * as pty from "./pty";
 import * as workspaces from "./workspaces";
 import { CodexCloudClient, CloudTaskError, type TaskId } from "./cloud/index";
 import { setupAutoUpdater } from "./updater";
+import { SemanticSearchEngine } from "./semantic";
 
 // MCP HTTP Server for browser automation
 const MCP_HTTP_PORT = 18799;
 let mcpHttpServer: http.Server | null = null;
+const CODEX_BINARY_NAME = process.platform === "win32" ? "codex.exe" : "codex";
+const CODEX_ENV_OVERRIDE_KEYS = ["CODEX_CLI_PATH", "CUSTOM_CLI_PATH"] as const;
+let cachedShellPath: string | null = null;
+
+type CodexCliResolution = {
+  executablePath: string;
+  source: "env" | "bundled" | "path";
+};
+
+type CodexCliInfo = {
+  source: "env" | "bundled" | "path";
+  executablePath: string;
+  available: boolean;
+  version: string | null;
+};
+
+const isFile = (target: string): boolean => {
+  try {
+    return fs.statSync(target).isFile();
+  } catch {
+    return false;
+  }
+};
+
+const isUsableExecutable = (target: string): boolean => {
+  if (!isFile(target)) return false;
+  if (process.platform === "win32") return true;
+  try {
+    fs.accessSync(target, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const normalizeCodexCandidate = (candidate: string | null | undefined): string | null => {
+  if (!candidate) return null;
+  const trimmed = candidate.trim();
+  if (!trimmed) return null;
+
+  let resolved = trimmed;
+  try {
+    if (fs.statSync(trimmed).isDirectory()) {
+      resolved = path.join(trimmed, CODEX_BINARY_NAME);
+    }
+  } catch {
+    return null;
+  }
+
+  return isUsableExecutable(resolved) ? resolved : null;
+};
+
+const resolveBundledCodexPath = (): string | null => {
+  const candidates = [
+    path.join(process.resourcesPath, CODEX_BINARY_NAME),
+    path.join(process.resourcesPath, "codex"),
+    path.join(process.resourcesPath, "codex.exe"),
+    path.join(process.resourcesPath, "app.asar.unpacked", CODEX_BINARY_NAME),
+    path.join(process.resourcesPath, "bin", CODEX_BINARY_NAME),
+    path.join(process.resourcesPath, "bin", "codex"),
+    path.join(process.resourcesPath, "bin", "codex.exe"),
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeCodexCandidate(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
+};
+
+const resolveCodexCli = (): CodexCliResolution => {
+  for (const key of CODEX_ENV_OVERRIDE_KEYS) {
+    const override = normalizeCodexCandidate(process.env[key]);
+    if (override) {
+      return { executablePath: override, source: "env" };
+    }
+  }
+
+  const bundled = resolveBundledCodexPath();
+  if (bundled) {
+    return { executablePath: bundled, source: "bundled" };
+  }
+
+  return { executablePath: "codex", source: "path" };
+};
+
+const getCodexCliInfo = async (): Promise<CodexCliInfo> => {
+  const cli = resolveCodexCli();
+  const shellPath = await resolveShellPath();
+  const codexEnv = { ...process.env, PATH: shellPath };
+
+  return new Promise((resolve) => {
+    execFile(
+      cli.executablePath,
+      ["--version"],
+      { env: codexEnv, timeout: 5000 },
+      (error, stdout, stderr) => {
+        if (error) {
+          resolve({
+            source: cli.source,
+            executablePath: cli.executablePath,
+            available: false,
+            version: null,
+          });
+          return;
+        }
+
+        const rawVersion = `${stdout || ""}\n${stderr || ""}`.trim();
+        const version = rawVersion ? rawVersion.split("\n")[0].trim() : null;
+        resolve({
+          source: cli.source,
+          executablePath: cli.executablePath,
+          available: true,
+          version,
+        });
+      }
+    );
+  });
+};
+
+const resolveShellPath = async (): Promise<string> => {
+  if (cachedShellPath) return cachedShellPath;
+
+  let userPath = process.env.PATH || "";
+  try {
+    const { execSync } = await import("child_process");
+    const shellPath = execSync(
+      process.platform === "darwin"
+        ? "source ~/.zshrc 2>/dev/null || source ~/.bash_profile 2>/dev/null || true; echo $PATH"
+        : "source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null || true; echo $PATH",
+      { shell: "/bin/bash", encoding: "utf-8" }
+    ).trim();
+    if (shellPath) {
+      userPath = shellPath;
+    }
+  } catch {
+    const commonPaths = [
+      "/usr/local/bin",
+      "/opt/homebrew/bin",
+      "/usr/bin",
+      "/bin",
+      "/usr/sbin",
+      "/sbin",
+      `${os.homedir()}/.local/bin`,
+      `${os.homedir()}/.npm-global/bin`,
+      `${os.homedir()}/.yarn/bin`,
+      `${os.homedir()}/node_modules/.bin`,
+    ];
+    userPath = commonPaths.join(path.delimiter) + (userPath ? `${path.delimiter}${userPath}` : "");
+  }
+
+  cachedShellPath = userPath;
+  return userPath;
+};
 
 // MCP Tool type definitions for Codex integration
 type McpTool = {
@@ -306,39 +460,8 @@ class CodexAppServer {
     }
 
     this.onStatus({ state: "starting" });
-
-    // Get the user's shell PATH to ensure codex can be found
-    // This is necessary because packaged Electron apps don't inherit shell env
-    let userPath = process.env.PATH || "";
-    try {
-      const { execSync } = await import("child_process");
-      const shellPath = execSync(
-        process.platform === "darwin" 
-          ? "source ~/.zshrc 2>/dev/null || source ~/.bash_profile 2>/dev/null || true; echo $PATH"
-          : "source ~/.bashrc 2>/dev/null || source ~/.profile 2>/dev/null || true; echo $PATH",
-        { shell: "/bin/bash", encoding: "utf-8" }
-      ).trim();
-      if (shellPath) {
-        userPath = shellPath;
-      }
-    } catch {
-      // Fallback to common paths if shell detection fails
-      const commonPaths = [
-        "/usr/local/bin",
-        "/opt/homebrew/bin",
-        "/usr/bin",
-        "/bin",
-        "/usr/sbin",
-        "/sbin",
-        `${os.homedir()}/.nvm/versions/node/v22.14.0/bin`,
-        `${os.homedir()}/.local/bin`,
-        `${os.homedir()}/.npm-global/bin`,
-        `${os.homedir()}/.yarn/bin`,
-        `${os.homedir()}/node_modules/.bin`,
-      ];
-      userPath = commonPaths.join(":") + (userPath ? ":" + userPath : "");
-    }
-
+    const codexCli = resolveCodexCli();
+    const userPath = await resolveShellPath();
     const env = {
       ...process.env,
       PATH: userPath,
@@ -346,19 +469,23 @@ class CodexAppServer {
 
     if (process.env.NODE_ENV === "development") {
       console.log("[Codex] Starting with PATH:", userPath.substring(0, 200) + "...");
+      console.log("[Codex] Starting app-server with:", codexCli.executablePath, `(source: ${codexCli.source})`);
     }
 
-    this.proc = spawn("codex", ["app-server"], {
+    this.proc = spawn(codexCli.executablePath, ["app-server"], {
       stdio: ["pipe", "pipe", "pipe"],
       env,
       shell: false,
     });
 
     this.proc.on("error", (err) => {
-      const message =
-        err && "code" in err && err.code === "ENOENT"
-          ? "Codex CLI not found in PATH. Install it and restart Chimera."
-          : `Failed to start codex app-server: ${String(err)}`;
+      const missingMessage =
+        codexCli.source === "path"
+          ? "Codex CLI not found. Install it, or set CODEX_CLI_PATH to a valid binary."
+          : `Codex CLI binary not found at ${codexCli.executablePath}. Reinstall Chimera or set CODEX_CLI_PATH.`;
+      const message = err && "code" in err && err.code === "ENOENT"
+        ? missingMessage
+        : `Failed to start codex app-server: ${String(err)}`;
       this.onStatus({ state: "error", message });
       this.cleanup();
     });
@@ -505,6 +632,7 @@ class CodexAppServer {
 let mainWindow: BrowserWindow | null = null;
 let codex: CodexAppServer | null = null;
 let browserMcp: BrowserMcpBridge | null = null;
+let semanticSearch: SemanticSearchEngine | null = null;
 let lastStatus: CodexStatus = { state: "starting" };
 let currentAppSessionId: number | null = null;
 let appSessionHeartbeat: NodeJS.Timeout | null = null;
@@ -619,6 +747,60 @@ const setupIpc = () => {
 
   ipcMain.handle("app:getPath", () => app.getAppPath());
   ipcMain.handle("app:getVersion", () => app.getVersion());
+  ipcMain.handle("app:getHomePath", () => app.getPath("home"));
+  ipcMain.handle("codex:cliInfo", async () => getCodexCliInfo());
+
+  // Semantic search IPC
+  ipcMain.handle("semantic:status", async (_event, workspacePath: string) => {
+    if (!semanticSearch) {
+      return { success: false, error: "Semantic search engine is unavailable." };
+    }
+    if (!workspacePath || typeof workspacePath !== "string") {
+      return { success: false, error: "Workspace path is required." };
+    }
+    try {
+      const status = await semanticSearch.getStatus(workspacePath);
+      return { success: true, status };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("semantic:index", async (_event, workspacePath: string) => {
+    if (!semanticSearch) {
+      return { success: false, error: "Semantic search engine is unavailable." };
+    }
+    if (!workspacePath || typeof workspacePath !== "string") {
+      return { success: false, error: "Workspace path is required." };
+    }
+    try {
+      const stats = await semanticSearch.indexWorkspace(workspacePath);
+      return { success: true, stats };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle("semantic:search", async (
+    _event,
+    params: { workspacePath: string; query: string; limit?: number; minScore?: number; mode?: "semantic" | "smart" }
+  ) => {
+    if (!semanticSearch) {
+      return { success: false, error: "Semantic search engine is unavailable." };
+    }
+    if (!params?.workspacePath || typeof params.workspacePath !== "string") {
+      return { success: false, error: "Workspace path is required." };
+    }
+    if (!params?.query || typeof params.query !== "string") {
+      return { success: false, error: "Search query is required." };
+    }
+    try {
+      const result = await semanticSearch.search(params);
+      return { success: true, result };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 
   // Rate limits IPC
   ipcMain.handle("codex:rateLimits", () => lastRateLimits);
@@ -1153,6 +1335,65 @@ const setupIpc = () => {
     }
   });
 
+  // Skills IPC handlers
+  ipcMain.handle("skills:install-git", async (_event, params: {
+    repoUrl: string;
+    workspacePath?: string | null;
+    scope?: "personal" | "project";
+  }) => {
+    try {
+      const repoUrl = (params.repoUrl || "").trim();
+      if (!repoUrl) {
+        return { success: false, error: "Repository URL is required" };
+      }
+
+      const isProjectScope = params.scope === "project" && params.workspacePath;
+      const root = isProjectScope
+        ? path.join(params.workspacePath as string, ".codex", "skills")
+        : path.join(app.getPath("home"), ".codex", "skills");
+
+      await fs.promises.mkdir(root, { recursive: true });
+
+      const repoNameMatch = repoUrl.replace(/\/+$/, "").match(/([^/]+?)(?:\.git)?$/);
+      const baseName = (repoNameMatch?.[1] || `skill-${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, "-");
+      let installDir = path.join(root, baseName);
+      let suffix = 1;
+      while (true) {
+        try {
+          await fs.promises.access(installDir);
+          installDir = path.join(root, `${baseName}-${suffix++}`);
+        } catch {
+          break;
+        }
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "git",
+          ["clone", "--depth", "1", repoUrl, installDir],
+          (err, _stdout, stderr) => {
+            if (err) {
+              reject(new Error(stderr?.trim() || err.message));
+              return;
+            }
+            resolve();
+          }
+        );
+      });
+
+      let warning: string | undefined;
+      try {
+        await fs.promises.access(path.join(installDir, "SKILL.md"));
+      } catch {
+        warning = "Installed repo does not contain SKILL.md at root.";
+      }
+
+      return { success: true, path: installDir, warning };
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   // PTY IPC handlers
   ipcMain.handle("pty:create", (_event, id: string, cwd: string) => {
     return pty.createPty(id, cwd);
@@ -1285,9 +1526,16 @@ const setupIpc = () => {
 
 // Auto-register MCP server with Codex CLI
 const registerMcpWithCodex = async (): Promise<void> => {
+  const shellPath = await resolveShellPath();
   return new Promise((resolve) => {
+    const codexCli = resolveCodexCli();
+    const codexEnv = {
+      ...process.env,
+      PATH: shellPath,
+    };
+
     // First check if codex CLI is available
-    execFile("codex", ["--version"], (versionErr) => {
+    execFile(codexCli.executablePath, ["--version"], { env: codexEnv }, (versionErr) => {
       if (versionErr) {
         // Codex CLI not installed - silently skip
         if (process.env.NODE_ENV === "development") {
@@ -1298,7 +1546,11 @@ const registerMcpWithCodex = async (): Promise<void> => {
       }
 
       // Check if already registered
-      execFile("codex", ["mcp", "list"], { maxBuffer: 10 * 1024 * 1024 }, (listErr, stdout) => {
+      execFile(
+        codexCli.executablePath,
+        ["mcp", "list"],
+        { maxBuffer: 10 * 1024 * 1024, env: codexEnv },
+        (listErr, stdout) => {
         if (listErr) {
           if (process.env.NODE_ENV === "development") {
             console.log("Failed to check MCP list:", listErr.message);
@@ -1318,7 +1570,7 @@ const registerMcpWithCodex = async (): Promise<void> => {
 
         // Register the MCP server
         const appPath = app.getAppPath();
-        const addCommand = "codex";
+        const addCommand = codexCli.executablePath;
         const addArgs = [
           "mcp",
           "add",
@@ -1331,7 +1583,7 @@ const registerMcpWithCodex = async (): Promise<void> => {
           appPath
         ];
 
-        execFile(addCommand, addArgs, (addErr, addStdout, addStderr) => {
+        execFile(addCommand, addArgs, { env: codexEnv }, (addErr, addStdout, addStderr) => {
           if (addErr) {
             if (process.env.NODE_ENV === "development") {
               console.log("Failed to register MCP server:", addStderr || addErr.message);
@@ -1651,6 +1903,7 @@ const bootCodex = async () => {
 app.whenReady().then(async () => {
   // Initialize database
   db.initDatabase();
+  semanticSearch = new SemanticSearchEngine(path.join(app.getPath("home"), ".chimera", "semantic"));
 
   createWindow();
   pty.setMainWindow(mainWindow);

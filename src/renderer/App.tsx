@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 
 // Import components
-import { CommandPalette, TerminalPanel, DiffPanel, SplitLayout, BrowserPanel, CloudPanel, WelcomeScreen, UpdateNotification, Settings } from "./components";
+import { SplitLayout } from "./components/SplitLayout";
+import { UpdateNotification } from "./components/UpdateNotification";
 
 // Import hooks
 import { useKeyboardShortcuts, type Command, useDebounce, useThreadCache, useIdleDetection, useRateLimitSync } from "./hooks";
@@ -25,7 +24,7 @@ import {
   workspaceReadyAtom,
 } from "./state/atoms/threads";
 import { threadDetailAtomFamily } from "./state/atoms/threadDetails";
-import { inputAtom, promptDraftAtomFamily } from "./state/atoms/drafts";
+import { inputAtom } from "./state/atoms/drafts";
 import {
   codexStatusAtom,
   modelsAtom,
@@ -57,6 +56,7 @@ import {
 import {
   splitViewEnabledAtom,
   saveAllFilesAtom,
+  openFileAtom,
 } from "./state/atoms/editor";
 
 // Import types
@@ -67,6 +67,9 @@ import type {
   ApprovalRequest,
   CodexStatus,
   ThreadDetailState,
+  TaskBoardCard,
+  TaskBoardColumn,
+  TaskBoardKind,
 } from "./state/types";
 import { getEmptyThreadDetailState } from "./state/types";
 
@@ -91,14 +94,69 @@ import {
   type DbThread,
 } from "./state/db";
 
+const CommandPalette = lazy(() => import("./components/CommandPalette"));
+const DiffPanel = lazy(() => import("./components/DiffPanel"));
+const BrowserPanel = lazy(() => import("./components/BrowserPanel"));
+const CloudPanel = lazy(() => import("./components/CloudPanel"));
+const Settings = lazy(() => import("./components/Settings"));
+const MarkdownContent = lazy(() => import("./components/MarkdownContent"));
+const SidebarSkills = lazy(async () => {
+  const module = await import("./components/SidebarSkills");
+  return { default: module.SidebarSkills };
+});
+const SidebarAutomations = lazy(async () => {
+  const module = await import("./components/SidebarAutomations");
+  return { default: module.SidebarAutomations };
+});
+const SidebarTaskBoard = lazy(() => import("./components/SidebarTaskBoard"));
+const SidebarSemanticSearch = lazy(() => import("./components/SidebarSemanticSearch"));
+const TaskBoard = lazy(() => import("./components/TaskBoard"));
+const WelcomeScreen = lazy(async () => {
+  const module = await import("./components/WelcomeScreen");
+  return { default: module.WelcomeScreen };
+});
+const TerminalPanel = lazy(async () => {
+  const module = await import("./components/Terminal");
+  return { default: module.TerminalPanel };
+});
+
 // Memory limit constants to prevent unbounded growth
 const MAX_ITEMS_BY_ID = 500;        // Max items stored per thread
 const MAX_COMMAND_OUTPUT = 50;      // Max command outputs stored
 const MAX_OUTPUT_LENGTH = 100000;   // Max characters per output
+const CHAT_BOTTOM_THRESHOLD = 48;
+const CHAT_VIRTUALIZE_MIN_ITEMS = 120;
+const CHAT_VIRTUAL_OVERSCAN_PX = 480;
+const TASKBOARD_STORAGE_KEY = "taskboard.cards.v1";
+
+const LazyPanelFallback = ({ label = "Loading..." }: { label?: string }) => (
+  <div className="lazy-panel-fallback">{label}</div>
+);
+
+const LazyOverlayFallback = ({ label = "Loading..." }: { label?: string }) => (
+  <div className="lazy-overlay-fallback">{label}</div>
+);
 
 // Utility functions
 const formatTime = (value: number) =>
   new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+const cloudStatusToColumn = (status?: string): TaskBoardColumn => {
+  const value = String(status || "").toLowerCase();
+  if (value === "applied" || value === "completed") return "done";
+  if (value === "ready") return "review";
+  if (value === "in_progress" || value === "running" || value === "pending") return "running";
+  if (value === "error" || value === "failed") return "blocked";
+  return "backlog";
+};
+
+const getProjectName = (thread: ThreadSummary) => {
+  if (thread.cwd) {
+    const parts = thread.cwd.split("/").filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
+  return thread.preview || "Untitled";
+};
 
 const mapThread = (row: any): ThreadSummary => ({
   id: row.id,
@@ -167,6 +225,65 @@ const trimOutputLines = (output: string, limit = 12): { lines: string[]; omitted
   if (lines.length <= limit) return { lines, omitted: 0 };
   const omitted = lines.length - limit;
   return { lines: [`... +${omitted} lines`, ...lines.slice(-limit)], omitted };
+};
+
+const buildSemanticContextBlock = (
+  hits: SemanticSearchHit[],
+  pinned: string[]
+): string => {
+  const lines: string[] = [];
+
+  if (hits.length > 0) {
+    lines.push("Retrieved context from your workspace:");
+    hits.slice(0, 4).forEach((hit, index) => {
+      const snippet = hit.snippet.replace(/\s+/g, " ").trim().slice(0, 320);
+      lines.push(
+        `${index + 1}. ${hit.path}:${hit.startLine}-${hit.endLine} (${hit.source}, score ${hit.score.toFixed(2)})`
+      );
+      if (snippet) {
+        lines.push(`   ${snippet}`);
+      }
+    });
+  }
+
+  if (pinned.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("Pinned context notes:");
+    pinned.slice(0, 4).forEach((entry, index) => {
+      lines.push(`${index + 1}. ${entry}`);
+    });
+  }
+
+  if (lines.length === 0) return "";
+
+  return [
+    "[Chimera Semantic Context]",
+    "Use this as supporting context, and verify against real files/tools before finalizing changes.",
+    ...lines,
+    "[/Chimera Semantic Context]",
+  ].join("\\n");
+};
+
+const getThreadUpdatedAt = (thread: ThreadSummary) => thread.updatedAt || thread.createdAt || 0;
+
+const getThreadSearchText = (thread: ThreadSummary) => {
+  return [getProjectName(thread), thread.preview, thread.cwd, thread.gitInfo?.branch].filter(Boolean).join(" ").toLowerCase();
+};
+
+type ChatListItem =
+  | { key: string; kind: "empty" }
+  | { key: string; kind: "message"; message: Message }
+  | { key: string; kind: "approval"; approval: ApprovalRequest }
+  | { key: string; kind: "thinking" };
+
+const estimateChatItemHeight = (item: ChatListItem): number => {
+  if (item.kind === "empty") return 180;
+  if (item.kind === "thinking") return 40;
+  if (item.kind === "approval") return 132;
+  const chars = item.message.text?.length ?? 0;
+  const lines = Math.max(1, Math.ceil(chars / 72));
+  const base = item.message.role === "user" ? 36 : 28;
+  return Math.min(560, Math.max(56, base + lines * 22));
 };
 
 // Extract first **bold** header from reasoning text (like TUI does)
@@ -349,6 +466,7 @@ export default function App() {
   // Split view
   const [splitViewEnabled, setSplitViewEnabled] = useAtom(splitViewEnabledAtom);
   const saveAllFiles = useSetAtom(saveAllFilesAtom);
+  const openFileInEditor = useSetAtom(openFileAtom);
 
   // Apply theme class to html element
   useEffect(() => {
@@ -429,12 +547,41 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const activityEndRef = useRef<HTMLDivElement>(null);
   const autoResumeRef = useRef(false);
+  const forceChatScrollTicksRef = useRef(0);
+  const chatScrollRafRef = useRef<number | null>(null);
+  const isChatNearBottomRef = useRef(true);
+  const threadScrollStateRef = useRef<Map<string, { top: number; nearBottom: boolean }>>(new Map());
+  const forceChatRestoreTopRef = useRef<number | null>(null);
+  const forceChatRestoreTicksRef = useRef(0);
+  const chatItemHeightsRef = useRef<Map<string, number>>(new Map());
 
   // Scroll state
   const [isChatNearBottom, setIsChatNearBottom] = useState(true);
+  const [chatScrollTop, setChatScrollTop] = useState(0);
+  const [chatViewportHeight, setChatViewportHeight] = useState(0);
+  const [chatMeasureVersion, setChatMeasureVersion] = useState(0);
 
   // Settings state
   const [showSettings, setShowSettings] = useState(false);
+  const [showComposerCloud, setShowComposerCloud] = useState(false);
+  const [showTaskBoardPage, setShowTaskBoardPage] = useState(false);
+  const [showSkillsInSidebar, setShowSkillsInSidebar] = useState(false);
+  const [showAutomationsInSidebar, setShowAutomationsInSidebar] = useState(false);
+  const [showSemanticInSidebar, setShowSemanticInSidebar] = useState(false);
+  const [useSemanticContext, setUseSemanticContext] = useState(true);
+  const [pinnedSemanticContext, setPinnedSemanticContext] = useState<string[]>([]);
+  const [lastSemanticContextMeta, setLastSemanticContextMeta] = useState<{
+    autoHits: number;
+    pinned: number;
+  } | null>(null);
+  const [threadVisibility, setThreadVisibility] = useState<"relevant" | "all">("relevant");
+  const [sidebarSort, setSidebarSort] = useState<"updated" | "created" | "title">("updated");
+  const [sidebarGroup, setSidebarGroup] = useState<"recency" | "workspace">("recency");
+  const [threadSearch, setThreadSearch] = useState("");
+  const [unreadThreadIds, setUnreadThreadIds] = useState<Set<string>>(new Set());
+  const [taskBoardCards, setTaskBoardCards] = useState<TaskBoardCard[]>([]);
+  const [taskBoardLoaded, setTaskBoardLoaded] = useState(false);
+  const [importingCloudTasks, setImportingCloudTasks] = useState(false);
 
   // Command palette state
   const [showCommandPalette, setShowCommandPalette] = useState(false);
@@ -444,6 +591,147 @@ export default function App() {
 
   // Text input ref for focus
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load persisted sidebar preferences and unread state
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const prefs = await dbSettings.getJson<{
+          visibility?: "relevant" | "all";
+          sort?: "updated" | "created" | "title";
+          group?: "recency" | "workspace";
+        }>("sidebar.preferences", {});
+        if (cancelled) return;
+        if (prefs.visibility) setThreadVisibility(prefs.visibility);
+        if (prefs.sort) setSidebarSort(prefs.sort);
+        if (prefs.group) setSidebarGroup(prefs.group);
+      } catch {
+        // ignore
+      }
+
+      try {
+        const unread = await dbSettings.getJson<string[]>("threads.unread", []);
+        if (!cancelled && Array.isArray(unread)) {
+          setUnreadThreadIds(new Set(unread));
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const [semanticSidebar, semanticContextEnabled, semanticPinned] = await Promise.all([
+          dbSettings.getJson<boolean>("semantic.sidebar.visible", false),
+          dbSettings.getJson<boolean>("semantic.context.enabled", true),
+          dbSettings.getJson<string[]>("semantic.context.pinned", []),
+        ]);
+        if (cancelled) return;
+        if (typeof semanticSidebar === "boolean") setShowSemanticInSidebar(semanticSidebar);
+        if (typeof semanticContextEnabled === "boolean") setUseSemanticContext(semanticContextEnabled);
+        if (Array.isArray(semanticPinned)) {
+          setPinnedSemanticContext(semanticPinned.filter((entry) => typeof entry === "string").slice(0, 8));
+        }
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Load task board cards
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = await dbSettings.getJson<TaskBoardCard[]>(TASKBOARD_STORAGE_KEY, []);
+        if (cancelled) return;
+        if (Array.isArray(stored)) {
+          const normalized = stored
+            .filter((card) => card && typeof card === "object" && typeof card.id === "string" && typeof card.workspacePath === "string")
+            .map((card) => ({
+              ...card,
+              title: String(card.title || "Untitled task"),
+              kind: card.kind === "cloud" ? "cloud" : "local",
+              column: ([
+                "backlog",
+                "ready",
+                "running",
+                "blocked",
+                "review",
+                "done",
+              ] as TaskBoardColumn[]).includes(card.column as TaskBoardColumn)
+                ? (card.column as TaskBoardColumn)
+                : "backlog",
+              deps: Array.isArray(card.deps) ? card.deps.filter((id) => typeof id === "string") : [],
+              createdAt: Number(card.createdAt || Math.floor(Date.now() / 1000)),
+              updatedAt: Number(card.updatedAt || Math.floor(Date.now() / 1000)),
+            }));
+          setTaskBoardCards(normalized);
+        }
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) {
+          setTaskBoardLoaded(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist task board cards
+  useEffect(() => {
+    if (!taskBoardLoaded) return;
+    void dbSettings.setJson(TASKBOARD_STORAGE_KEY, taskBoardCards);
+  }, [taskBoardCards, taskBoardLoaded]);
+
+  // Persist sidebar preferences
+  useEffect(() => {
+    void dbSettings.setJson("sidebar.preferences", {
+      visibility: threadVisibility,
+      sort: sidebarSort,
+      group: sidebarGroup,
+    });
+  }, [threadVisibility, sidebarSort, sidebarGroup]);
+
+  // Persist unread state
+  useEffect(() => {
+    void dbSettings.setJson("threads.unread", Array.from(unreadThreadIds));
+  }, [unreadThreadIds]);
+
+  // Persist semantic settings
+  useEffect(() => {
+    void dbSettings.setJson("semantic.sidebar.visible", showSemanticInSidebar);
+  }, [showSemanticInSidebar]);
+
+  useEffect(() => {
+    void dbSettings.setJson("semantic.context.enabled", useSemanticContext);
+  }, [useSemanticContext]);
+
+  useEffect(() => {
+    void dbSettings.setJson("semantic.context.pinned", pinnedSemanticContext);
+  }, [pinnedSemanticContext]);
+
+  // One-time width migration for legacy defaults so shell parity applies immediately.
+  useEffect(() => {
+    if (sidebarWidth === 260) setSidebarWidth(280);
+    if (inspectorWidth === 320) setInspectorWidth(360);
+  }, [sidebarWidth, inspectorWidth, setSidebarWidth, setInspectorWidth]);
+
+  // Keep currently focused thread marked as read
+  useEffect(() => {
+    if (!activeThreadId) return;
+    setUnreadThreadIds((prev) => {
+      if (!prev.has(activeThreadId)) return prev;
+      const next = new Set(prev);
+      next.delete(activeThreadId);
+      return next;
+    });
+  }, [activeThreadId]);
 
   // Helper to update thread atom
   const upsertThread = useCallback((thread: ThreadSummary) => {
@@ -653,29 +941,149 @@ export default function App() {
   const updateChatScrollState = useCallback(() => {
     const container = messagesRef.current;
     if (!container) return;
-    const threshold = 48;
+    const nextTop = container.scrollTop;
+    const nextViewport = container.clientHeight;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    setIsChatNearBottom(distanceFromBottom <= threshold);
+    const nextNearBottom = distanceFromBottom <= CHAT_BOTTOM_THRESHOLD;
+    setChatScrollTop((prev) => (Math.abs(prev - nextTop) > 0.5 ? nextTop : prev));
+    setChatViewportHeight((prev) => (prev !== nextViewport ? nextViewport : prev));
+    if (nextNearBottom !== isChatNearBottomRef.current) {
+      isChatNearBottomRef.current = nextNearBottom;
+      setIsChatNearBottom(nextNearBottom);
+    }
   }, []);
+
+  useEffect(() => {
+    isChatNearBottomRef.current = isChatNearBottom;
+  }, [isChatNearBottom]);
 
   useEffect(() => {
     const container = messagesRef.current;
     if (!container) return;
     updateChatScrollState();
-    const handleScroll = () => updateChatScrollState();
+    const handleScroll = () => {
+      if (chatScrollRafRef.current !== null) return;
+      chatScrollRafRef.current = window.requestAnimationFrame(() => {
+        chatScrollRafRef.current = null;
+        updateChatScrollState();
+        if (activeThreadId) {
+          threadScrollStateRef.current.set(activeThreadId, {
+            top: container.scrollTop,
+            nearBottom: isChatNearBottomRef.current,
+          });
+        }
+      });
+    };
     container.addEventListener("scroll", handleScroll, { passive: true });
-    return () => container.removeEventListener("scroll", handleScroll);
-  }, [updateChatScrollState]);
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (chatScrollRafRef.current !== null) {
+        window.cancelAnimationFrame(chatScrollRafRef.current);
+        chatScrollRafRef.current = null;
+      }
+    };
+  }, [activeThreadId, updateChatScrollState]);
 
   useEffect(() => {
+    const container = messagesRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      setChatViewportHeight((prev) => (prev !== container.clientHeight ? container.clientHeight : prev));
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId) return;
+    const saved = threadScrollStateRef.current.get(activeThreadId);
+    if (saved && !saved.nearBottom) {
+      forceChatScrollTicksRef.current = 0;
+      forceChatRestoreTopRef.current = saved.top;
+      forceChatRestoreTicksRef.current = Math.max(forceChatRestoreTicksRef.current, 6);
+      isChatNearBottomRef.current = false;
+      setIsChatNearBottom(false);
+      return;
+    }
+
+    // Default behavior for unseen threads or bottom-anchored threads.
+    forceChatRestoreTopRef.current = null;
+    forceChatRestoreTicksRef.current = 0;
+    forceChatScrollTicksRef.current = Math.max(forceChatScrollTicksRef.current, 4);
+    isChatNearBottomRef.current = true;
     setIsChatNearBottom(true);
   }, [activeThreadId]);
 
+  useEffect(() => {
+    setShowComposerCloud(false);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    setLastSemanticContextMeta(null);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      setShowTaskBoardPage(false);
+    }
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (activeTab === "browser") {
+      setShowComposerCloud(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (showSettings || showCommandPalette) {
+      setShowComposerCloud(false);
+    }
+  }, [showSettings, showCommandPalette]);
+
+  useEffect(() => {
+    if (!showTaskBoardPage) return;
+    setShowComposerCloud(false);
+    if (activeTab === "browser") {
+      setActiveTab("events");
+    }
+  }, [activeTab, setActiveTab, showTaskBoardPage]);
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      setShowComposerCloud(false);
+      return;
+    }
+    const thread = pendingThreadUpdates.current.get(activeThreadId);
+    if (!thread?.cwd) {
+      setShowComposerCloud(false);
+    }
+  }, [activeThreadId, threadIds]);
+
   useLayoutEffect(() => {
+    const container = messagesRef.current;
+    if (!container) return;
+
+    if (forceChatRestoreTicksRef.current > 0 && forceChatRestoreTopRef.current !== null) {
+      container.scrollTop = forceChatRestoreTopRef.current;
+      forceChatRestoreTicksRef.current -= 1;
+      if (forceChatRestoreTicksRef.current === 0) {
+        forceChatRestoreTopRef.current = null;
+      }
+      updateChatScrollState();
+      return;
+    }
+
+    if (forceChatScrollTicksRef.current > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "auto", block: "end" });
+      forceChatScrollTicksRef.current -= 1;
+      updateChatScrollState();
+      return;
+    }
     if (!isChatNearBottom) return;
     const behavior = activeTurnId ? "auto" : "smooth";
     messagesEndRef.current?.scrollIntoView({ behavior, block: "end" });
-  }, [activeTurnId, isChatNearBottom, messages]);
+    updateChatScrollState();
+  }, [activeThreadId, activeTurnId, isChatNearBottom, messages.length, pendingApprovals.length, updateChatScrollState]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -683,6 +1091,7 @@ export default function App() {
       if (!composerRef.current) return;
       if (composerRef.current.contains(event.target as Node)) return;
       setOpenMenu(null);
+      setShowComposerCloud(false);
     };
     window.addEventListener("pointerdown", handlePointer);
     return () => window.removeEventListener("pointerdown", handlePointer);
@@ -933,6 +1342,24 @@ export default function App() {
     async (threadId: string) => {
       // Cancel any pending debounced selection
       cancelDebouncedSelect();
+
+      // Persist current thread's scroll state before switching away.
+      if (activeThreadId && messagesRef.current) {
+        const container = messagesRef.current;
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        threadScrollStateRef.current.set(activeThreadId, {
+          top: container.scrollTop,
+          nearBottom: distanceFromBottom <= CHAT_BOTTOM_THRESHOLD,
+        });
+      }
+
+      // Active thread is always considered read
+      setUnreadThreadIds((prev) => {
+        if (!prev.has(threadId)) return prev;
+        const next = new Set(prev);
+        next.delete(threadId);
+        return next;
+      });
       
       // If switching from another thread, cache the current state first
       if (activeThreadId && activeThreadId !== threadId) {
@@ -1087,10 +1514,40 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
       content: trimmed,
     }).catch(() => {});
 
+    let inputText = trimmed;
+    let autoSemanticHits: SemanticSearchHit[] = [];
+
+    if (useSemanticContext && window.codex.semantic) {
+      try {
+        const semanticResponse = await window.codex.semantic.search({
+          workspacePath: thread.cwd,
+          query: trimmed,
+          mode: "smart",
+          limit: 4,
+        });
+        if (semanticResponse.success && semanticResponse.result?.hits) {
+          autoSemanticHits = semanticResponse.result.hits.slice(0, 4);
+        }
+      } catch {
+        // semantic context is best effort
+      }
+    }
+
+    const contextBlock = buildSemanticContextBlock(autoSemanticHits, pinnedSemanticContext);
+    if (contextBlock) {
+      inputText = `${trimmed}\n\n${contextBlock}`;
+      setLastSemanticContextMeta({
+        autoHits: autoSemanticHits.length,
+        pinned: Math.min(4, pinnedSemanticContext.length),
+      });
+    } else {
+      setLastSemanticContextMeta(null);
+    }
+
     try {
       await window.codex.request("turn/start", {
         threadId: activeThreadId,
-        input: [{ type: "text", text: trimmed }],
+        input: [{ type: "text", text: inputText }],
         model: selectedModelId || undefined,
         effort: selectedEffort || undefined,
         approvalPolicy,
@@ -1100,7 +1557,19 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
     } catch (err) {
       pushActivity("Failed to send turn", String(err));
     }
-  }, [activeThreadId, input, pushActivity, approvalPolicy, sandboxMode, selectedEffort, selectedModelId, updateDetail, setInput]);
+  }, [
+    activeThreadId,
+    approvalPolicy,
+    input,
+    pinnedSemanticContext,
+    pushActivity,
+    sandboxMode,
+    selectedEffort,
+    selectedModelId,
+    setInput,
+    updateDetail,
+    useSemanticContext,
+  ]);
 
   const interruptTurn = useCallback(async () => {
     if (!window.codex || !activeThreadId || !activeTurnId) return;
@@ -1136,6 +1605,33 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
     });
   }, [setArchivedIds]);
 
+  const toggleUnread = useCallback((id: string) => {
+    setUnreadThreadIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const renameThread = useCallback((id: string) => {
+    const thread = pendingThreadUpdates.current.get(id);
+    if (!thread) return;
+    const currentName = thread.preview || getProjectName(thread);
+    const nextName = window.prompt("Rename conversation", currentName);
+    if (typeof nextName !== "string") return;
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === currentName) return;
+
+    pendingThreadUpdates.current.set(id, {
+      ...thread,
+      preview: trimmed,
+      updatedAt: Math.floor(Date.now() / 1000),
+    });
+    setThreadIds((prev) => [...prev]);
+    dbThreads.update(id, { preview: trimmed }).catch(() => {});
+  }, [setThreadIds]);
+
   const closeWorkspace = useCallback((id: string) => {
     setThreadIds((prev) => prev.filter((tid) => tid !== id));
     setPinnedIds((prev) => {
@@ -1144,6 +1640,12 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
       return next;
     });
     setArchivedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setUnreadThreadIds((prev) => {
+      if (!prev.has(id)) return prev;
       const next = new Set(prev);
       next.delete(id);
       return next;
@@ -1192,8 +1694,16 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
 
       if (method === "item/completed") {
         const item = params?.item;
+        const threadIdForItem = params?.threadId ?? params?.thread_id;
         if (item?.type === "agentMessage") {
           finalizeAgentMessage(item.id, item.text ?? "");
+          if (threadIdForItem && threadIdForItem !== activeThreadId) {
+            setUnreadThreadIds((prev) => {
+              const next = new Set(prev);
+              next.add(threadIdForItem);
+              return next;
+            });
+          }
         }
         if (item?.type === "commandExecution" && item?.aggregatedOutput) {
           updateDetail((prev) => {
@@ -1375,6 +1885,18 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
         const threadId = params?.threadId ?? params?.thread_id;
         if (threadId && threadId === activeThreadId) {
           updateDetail((prev) => ({ ...prev, activeTurnId: null, statusHeader: "Working", reasoningBuffer: "" }));
+          setUnreadThreadIds((prev) => {
+            if (!prev.has(threadId)) return prev;
+            const next = new Set(prev);
+            next.delete(threadId);
+            return next;
+          });
+        } else if (threadId) {
+          setUnreadThreadIds((prev) => {
+            const next = new Set(prev);
+            next.add(threadId);
+            return next;
+          });
         }
         if (historyLoaded) refreshThreads();
       }
@@ -1651,6 +2173,7 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
   const getThreadById = (id: string): ThreadSummary | null => {
     return pendingThreadUpdates.current.get(id) || null;
   };
+  const workspaceReadyForCommands = Boolean(activeThreadId && pendingThreadUpdates.current.get(activeThreadId)?.cwd);
 
   // Command palette commands
   const commands: Command[] = useMemo(() => [
@@ -1706,6 +2229,31 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
         if (showCommandPalette) setShowCommandPalette(false);
         else if (showSettings) setShowSettings(false);
         else if (showTerminal) setShowTerminal(false);
+        else if (showComposerCloud) setShowComposerCloud(false);
+        else if (activeTab === "browser") setActiveTab("events");
+        else if (showTaskBoardPage) setShowTaskBoardPage(false);
+      },
+    },
+    {
+      id: "toggle-cloud-surface",
+      label: showComposerCloud ? "Hide Cloud Tasks" : "Show Cloud Tasks",
+      shortcut: "Cmd+Shift+C",
+      category: "View",
+      action: () => {
+        if (!workspaceReadyForCommands) return;
+        setShowTaskBoardPage(false);
+        setActiveTab("events");
+        setShowComposerCloud((prev) => !prev);
+      },
+    },
+    {
+      id: "toggle-browser-panel",
+      label: activeTab === "browser" ? "Hide Browser Panel" : "Show Browser Panel",
+      shortcut: "Cmd+Shift+B",
+      category: "View",
+      action: () => {
+        setShowComposerCloud(false);
+        setActiveTab((prev) => (prev === "browser" ? "events" : "browser"));
       },
     },
     {
@@ -1729,6 +2277,16 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
       action: () => setSplitViewEnabled((prev) => !prev),
     },
     {
+      id: "toggle-task-board",
+      label: showTaskBoardPage ? "Show Chat Workspace" : "Show Task Board",
+      shortcut: "Cmd+Shift+T",
+      category: "View",
+      action: () => {
+        if (!workspaceReadyForCommands) return;
+        setShowTaskBoardPage((prev) => !prev);
+      },
+    },
+    {
       id: "send-message",
       label: "Send Message",
       shortcut: "Cmd+Enter",
@@ -1742,7 +2300,26 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
       category: "Workspace",
       action: () => selectThread(id),
     })),
-  ], [activeThreadId, closeWorkspace, openWorkspace, saveAllFiles, selectThread, sendTurn, setSplitViewEnabled, setTheme, showCommandPalette, showSettings, showTerminal, theme, threadIds]);
+  ], [
+    activeTab,
+    activeThreadId,
+    closeWorkspace,
+    openWorkspace,
+    saveAllFiles,
+    selectThread,
+    sendTurn,
+    setActiveTab,
+    setSplitViewEnabled,
+    setTheme,
+    showCommandPalette,
+    showComposerCloud,
+    showSettings,
+    showTaskBoardPage,
+    showTerminal,
+    workspaceReadyForCommands,
+    theme,
+    threadIds,
+  ]);
 
   // Register keyboard shortcuts
   useKeyboardShortcuts(commands, { enabled: !showCommandPalette });
@@ -1756,13 +2333,400 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
   const archivedThreadsDisplay = useMemo(() => threadsFromUpdates.filter((t) => archivedIds.has(t.id)), [threadsFromUpdates, archivedIds]);
   const regularThreadsDisplay = useMemo(() => threadsFromUpdates.filter((t) => !pinnedIds.has(t.id) && !archivedIds.has(t.id)), [threadsFromUpdates, pinnedIds, archivedIds]);
   const activeThreadDisplay = useMemo(() => activeThreadId ? pendingThreadUpdates.current.get(activeThreadId) || null : null, [activeThreadId, threadIds]);
+  const normalizedThreadSearch = threadSearch.trim().toLowerCase();
+  const sortThreads = useCallback(
+    (threads: ThreadSummary[]) => {
+      const sorted = [...threads];
+      sorted.sort((a, b) => {
+        if (sidebarSort === "title") {
+          return getProjectName(a).localeCompare(getProjectName(b));
+        }
+        if (sidebarSort === "created") {
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        }
+        return getThreadUpdatedAt(b) - getThreadUpdatedAt(a);
+      });
+      return sorted;
+    },
+    [sidebarSort]
+  );
+
+  const threadMatchesSearch = useCallback(
+    (thread: ThreadSummary) => {
+      if (!normalizedThreadSearch) return true;
+      return getThreadSearchText(thread).includes(normalizedThreadSearch);
+    },
+    [normalizedThreadSearch]
+  );
+
+  const visibleRegularThreads = useMemo(() => {
+    let threads = regularThreadsDisplay;
+
+    if (threadVisibility !== "all") {
+      const sevenDaysAgo = Math.floor(Date.now() / 1000) - 60 * 60 * 24 * 7;
+      const activeBranch = activeThreadDisplay?.gitInfo?.branch;
+      threads = threads.filter((thread) => {
+        const updatedAt = getThreadUpdatedAt(thread);
+        if (updatedAt >= sevenDaysAgo) return true;
+        if (activeBranch && thread.gitInfo?.branch === activeBranch) return true;
+        return false;
+      });
+    }
+
+    return sortThreads(threads.filter(threadMatchesSearch));
+  }, [threadVisibility, regularThreadsDisplay, activeThreadDisplay?.gitInfo?.branch, threadMatchesSearch, sortThreads]);
+  const visiblePinnedThreads = useMemo(
+    () => sortThreads(pinnedThreadsDisplay.filter(threadMatchesSearch)),
+    [pinnedThreadsDisplay, sortThreads, threadMatchesSearch]
+  );
+  const visibleArchivedThreads = useMemo(
+    () => sortThreads(archivedThreadsDisplay.filter(threadMatchesSearch)),
+    [archivedThreadsDisplay, sortThreads, threadMatchesSearch]
+  );
+  const groupedRegularThreads = useMemo(() => {
+    if (sidebarGroup === "workspace") {
+      const groups = new Map<string, ThreadSummary[]>();
+      for (const thread of visibleRegularThreads) {
+        const key = getProjectName(thread);
+        const list = groups.get(key) ?? [];
+        list.push(thread);
+        groups.set(key, list);
+      }
+      return Array.from(groups.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([label, threads]) => ({ key: `workspace-${label}`, label, threads }));
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const buckets: Array<{ key: string; label: string; minAgeSec: number; maxAgeSec: number }> = [
+      { key: "today", label: "Today", minAgeSec: 0, maxAgeSec: 60 * 60 * 24 },
+      { key: "yesterday", label: "Yesterday", minAgeSec: 60 * 60 * 24, maxAgeSec: 60 * 60 * 24 * 2 },
+      { key: "week", label: "Last 7 Days", minAgeSec: 60 * 60 * 24 * 2, maxAgeSec: 60 * 60 * 24 * 7 },
+      { key: "older", label: "Older", minAgeSec: 60 * 60 * 24 * 7, maxAgeSec: Number.POSITIVE_INFINITY },
+    ];
+    return buckets
+      .map((bucket) => ({
+        key: bucket.key,
+        label: bucket.label,
+        threads: visibleRegularThreads.filter((thread) => {
+          const age = now - getThreadUpdatedAt(thread);
+          return age >= bucket.minAgeSec && age < bucket.maxAgeSec;
+        }),
+      }))
+      .filter((group) => group.threads.length > 0);
+  }, [sidebarGroup, visibleRegularThreads]);
+  const showRegularGroupLabels = sidebarGroup === "workspace" || groupedRegularThreads.length > 1;
+  const workspacePath = activeThreadDisplay?.cwd ?? null;
   const workspaceReadyDisplay = Boolean(activeThreadDisplay?.cwd);
+  const showAuxPanel = !showTaskBoardPage && activeTab === "browser";
+  const workspaceTaskBoardCards = useMemo(
+    () => (workspacePath ? taskBoardCards.filter((card) => card.workspacePath === workspacePath) : []),
+    [taskBoardCards, workspacePath]
+  );
+  const workspaceThreads = useMemo(
+    () =>
+      workspacePath
+        ? threadsFromUpdates.filter((thread) => thread.cwd === workspacePath)
+        : [],
+    [threadsFromUpdates, workspacePath]
+  );
+
+  useEffect(() => {
+    if (showTaskBoardPage && !workspaceReadyDisplay) {
+      setShowTaskBoardPage(false);
+    }
+  }, [showTaskBoardPage, workspaceReadyDisplay]);
+
+  const openTaskBoardPage = useCallback(() => {
+    if (!workspaceReadyDisplay) return;
+    setActiveTab("events");
+    setShowComposerCloud(false);
+    setShowTaskBoardPage(true);
+  }, [setActiveTab, workspaceReadyDisplay]);
+
+  const openCloudFromComposer = useCallback(() => {
+    if (!workspaceReadyDisplay) return;
+    setShowTaskBoardPage(false);
+    setActiveTab("events");
+    setShowComposerCloud((prev) => !prev);
+  }, [setActiveTab, workspaceReadyDisplay]);
+
+  const openCloudSurface = useCallback(() => {
+    if (!workspaceReadyDisplay) return;
+    setShowTaskBoardPage(false);
+    setActiveTab("events");
+    setShowComposerCloud(true);
+  }, [setActiveTab, workspaceReadyDisplay]);
+
+  const toggleBrowserPanel = useCallback(() => {
+    setShowTaskBoardPage(false);
+    setShowComposerCloud(false);
+    setActiveTab((prev) => (prev === "browser" ? "events" : "browser"));
+  }, [setActiveTab]);
+
+  const closeAuxPanel = useCallback(() => {
+    setActiveTab("events");
+  }, [setActiveTab]);
+
+  const handleSemanticOpenFile = useCallback((absolutePath: string, relativePath: string, line: number) => {
+    if (!workspacePath) return;
+    void openFileInEditor({ path: absolutePath, workspaceId: workspacePath });
+    pushActivity("Opened semantic result", `${relativePath}:${line}`);
+  }, [openFileInEditor, pushActivity, workspacePath]);
+
+  const handlePinSemanticContext = useCallback((entry: string) => {
+    const normalized = entry.replace(/\\s+/g, " ").trim();
+    if (!normalized) return;
+    setPinnedSemanticContext((prev) => {
+      const next = [normalized, ...prev.filter((item) => item !== normalized)];
+      return next.slice(0, 8);
+    });
+  }, []);
+
+  const clearPinnedSemanticContext = useCallback(() => {
+    setPinnedSemanticContext([]);
+  }, []);
+
+  const upsertTaskBoardCard = useCallback((id: string, updater: (card: TaskBoardCard) => TaskBoardCard) => {
+    const now = Math.floor(Date.now() / 1000);
+    setTaskBoardCards((prev) =>
+      prev.map((card) => {
+        if (card.id !== id) return card;
+        const next = updater(card);
+        return { ...next, updatedAt: now };
+      })
+    );
+  }, []);
+
+  const handleCreateTaskBoardCard = useCallback(
+    (kind: TaskBoardKind, title: string) => {
+      if (!workspacePath) return;
+      const now = Math.floor(Date.now() / 1000);
+      const id = `tb-${now}-${Math.random().toString(36).slice(2, 8)}`;
+      setTaskBoardCards((prev) => [
+        ...prev,
+        {
+          id,
+          workspacePath,
+          title,
+          kind,
+          column: kind === "cloud" ? "running" : "backlog",
+          deps: [],
+          threadId: kind === "local" ? activeThreadId : null,
+          cloudTaskId: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]);
+    },
+    [activeThreadId, workspacePath]
+  );
+
+  const handleMoveTaskBoardCard = useCallback((id: string, column: TaskBoardColumn) => {
+    upsertTaskBoardCard(id, (card) => ({ ...card, column }));
+  }, [upsertTaskBoardCard]);
+
+  const handleDeleteTaskBoardCard = useCallback((id: string) => {
+    setTaskBoardCards((prev) =>
+      prev
+        .filter((card) => card.id !== id)
+        .map((card) => ({
+          ...card,
+          deps: card.deps.filter((depId) => depId !== id),
+        }))
+    );
+  }, []);
+
+  const handleSetTaskBoardDeps = useCallback((id: string, deps: string[]) => {
+    const depSet = new Set(deps.filter((depId) => depId !== id));
+    upsertTaskBoardCard(id, (card) => ({ ...card, deps: Array.from(depSet) }));
+  }, [upsertTaskBoardCard]);
+
+  const handleLinkTaskBoardActiveThread = useCallback((id: string) => {
+    if (!activeThreadId) return;
+    upsertTaskBoardCard(id, (card) => ({ ...card, threadId: activeThreadId }));
+  }, [activeThreadId, upsertTaskBoardCard]);
+
+  const handleLinkTaskBoardThread = useCallback((id: string, threadId: string | null) => {
+    upsertTaskBoardCard(id, (card) => ({ ...card, threadId }));
+  }, [upsertTaskBoardCard]);
+
+  const handleImportCloudTasksToBoard = useCallback(async () => {
+    if (!workspacePath || !window.codex?.cloud?.listTasks) return;
+    setImportingCloudTasks(true);
+    try {
+      const result = await window.codex.cloud.listTasks();
+      if (!result?.success || !Array.isArray(result.tasks)) {
+        pushActivity("Failed to import cloud tasks", result?.error || "Cloud list failed");
+        return;
+      }
+      const now = Math.floor(Date.now() / 1000);
+      setTaskBoardCards((prev) => {
+        const next = [...prev];
+        const indexByCloudId = new Map<string, number>();
+        next.forEach((card, idx) => {
+          if (card.workspacePath === workspacePath && card.cloudTaskId) {
+            indexByCloudId.set(card.cloudTaskId, idx);
+          }
+        });
+        for (const task of result.tasks.slice(0, 40) as any[]) {
+          const cloudTaskId = task?.id?.id ? String(task.id.id) : "";
+          if (!cloudTaskId) continue;
+          const title = String(task?.title || "Cloud task");
+          const column = cloudStatusToColumn(task?.status);
+          const existingIdx = indexByCloudId.get(cloudTaskId);
+          if (existingIdx !== undefined) {
+            next[existingIdx] = {
+              ...next[existingIdx],
+              title,
+              kind: "cloud",
+              column,
+              updatedAt: now,
+            };
+          } else {
+            next.push({
+              id: `tb-cloud-${cloudTaskId}`,
+              workspacePath,
+              title,
+              kind: "cloud",
+              column,
+              deps: [],
+              threadId: null,
+              cloudTaskId,
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
+        }
+        return next;
+      });
+      pushActivity("Cloud tasks imported to board", workspacePath);
+    } catch (err) {
+      pushActivity("Failed to import cloud tasks", String(err));
+    } finally {
+      setImportingCloudTasks(false);
+    }
+  }, [pushActivity, workspacePath]);
+
+  const chatItems = useMemo<ChatListItem[]>(() => {
+    const prefix = activeThreadId || "thread:none";
+    const items: ChatListItem[] = [];
+    if (messages.length === 0 && pendingApprovals.length === 0) {
+      items.push({ key: `${prefix}:empty`, kind: "empty" });
+    } else {
+      items.push(...messages.map((message, index) => ({ key: `${prefix}:msg:${message.id}:${index}`, kind: "message" as const, message })));
+      items.push(...pendingApprovals.map((approval) => ({ key: `${prefix}:approval:${approval.id}`, kind: "approval" as const, approval })));
+    }
+    if (activeTurnId) {
+      items.push({ key: `${prefix}:thinking:${activeTurnId}`, kind: "thinking" });
+    }
+    return items;
+  }, [activeThreadId, activeTurnId, messages, pendingApprovals]);
+
+  const shouldVirtualizeChat = chatItems.length >= CHAT_VIRTUALIZE_MIN_ITEMS;
+
+  const renderChatItem = useCallback((item: ChatListItem) => {
+    if (item.kind === "empty") {
+      return (
+        <div className="empty-state">
+          {workspaceReadyDisplay ? (
+            <><h3>Start a session</h3><p>Send a task to begin. Updates stream here.</p></>
+          ) : (
+            <><h3>Select a folder to start</h3><p>Choose a workspace before starting a chat.</p><button className="primary" onClick={openWorkspace}>Open folder</button></>
+          )}
+        </div>
+      );
+    }
+    if (item.kind === "message") {
+      return <ChatBubble message={item.message} />;
+    }
+    if (item.kind === "approval") {
+      return <ApprovalCard approval={item.approval} onAccept={() => respondApproval(item.approval, "accept")} onDecline={() => respondApproval(item.approval, "decline")} />;
+    }
+    return (
+      <div className="thinking-row">
+        <div className="thinking-indicator">
+          <div className="pulsing-dot" />
+          <span className="shimmer-text">{statusHeader || "Working..."}</span>
+        </div>
+      </div>
+    );
+  }, [openWorkspace, respondApproval, statusHeader, workspaceReadyDisplay]);
+
+  const chatVirtualMetrics = useMemo(() => {
+    if (!shouldVirtualizeChat) {
+      return { totalHeight: 0, rows: [] as Array<{ item: ChatListItem; top: number; height: number }> };
+    }
+    let y = 0;
+    const rows = chatItems.map((item) => {
+      const measured = chatItemHeightsRef.current.get(item.key);
+      const height = measured ?? estimateChatItemHeight(item);
+      const top = y;
+      y += height;
+      return { item, top, height };
+    });
+    return { totalHeight: y, rows };
+  }, [chatItems, chatMeasureVersion, shouldVirtualizeChat]);
+
+  const visibleChatVirtualRows = useMemo(() => {
+    if (!shouldVirtualizeChat) return [];
+    const start = Math.max(0, chatScrollTop - CHAT_VIRTUAL_OVERSCAN_PX);
+    const end = chatScrollTop + Math.max(0, chatViewportHeight) + CHAT_VIRTUAL_OVERSCAN_PX;
+    const rows = chatVirtualMetrics.rows;
+    if (rows.length === 0) return [];
+
+    let lo = 0;
+    let hi = rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].top + rows[mid].height < start) lo = mid + 1;
+      else hi = mid;
+    }
+    const first = lo;
+
+    lo = first;
+    hi = rows.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (rows[mid].top <= end) lo = mid + 1;
+      else hi = mid;
+    }
+
+    return rows.slice(first, lo);
+  }, [chatScrollTop, chatViewportHeight, chatVirtualMetrics.rows, shouldVirtualizeChat]);
+
+  useEffect(() => {
+    const keySet = new Set(chatItems.map((item) => item.key));
+    let changed = false;
+    for (const key of chatItemHeightsRef.current.keys()) {
+      if (!keySet.has(key)) {
+        chatItemHeightsRef.current.delete(key);
+        changed = true;
+      }
+    }
+    if (changed) {
+      setChatMeasureVersion((prev) => prev + 1);
+    }
+  }, [chatItems]);
+
+  const handleChatRowMeasure = useCallback((key: string, height: number) => {
+    const prev = chatItemHeightsRef.current.get(key);
+    if (prev !== undefined && Math.abs(prev - height) <= 1) return;
+    chatItemHeightsRef.current.set(key, height);
+    setChatMeasureVersion((version) => version + 1);
+  }, []);
 
   // Stable callbacks for thread row actions to prevent memoization breaks
   const handleSelectThread = useCallback((id: string) => () => selectThread(id), [selectThread]);
   const handleTogglePin = useCallback((id: string) => () => togglePin(id), [togglePin]);
   const handleToggleArchive = useCallback((id: string) => () => toggleArchive(id), [toggleArchive]);
+  const handleRenameThread = useCallback((id: string) => () => renameThread(id), [renameThread]);
+  const handleToggleUnread = useCallback((id: string) => () => toggleUnread(id), [toggleUnread]);
   const handleCloseWorkspace = useCallback((id: string) => () => closeWorkspace(id), [closeWorkspace]);
+  const handleOpenBoardThread = useCallback((threadId: string) => {
+    setShowTaskBoardPage(false);
+    void selectThread(threadId);
+  }, [selectThread]);
 
   return (
     <div className={`app${!activeThreadId ? " no-sidebar" : ""}`} style={{ ["--sidebar-width" as any]: `${sidebarWidth}px`, ["--inspector-width" as any]: `${inspectorWidth}px` }}>
@@ -1775,23 +2739,74 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
           </div>
           <button className="sidebar-new-session" onClick={openWorkspace} title="New Session">
             <span className="new-session-icon">+</span>
-            <span className="new-session-text">New Session</span>
+            <span className="new-session-text">Add Project</span>
           </button>
         </div>
 
         <div className="sidebar-body">
-          {pinnedThreadsDisplay.length > 0 && (
+          <WorkspaceSwitcher />
+          <div className="sidebar-toolbar">
+            <div className="section-title">Conversations</div>
+            <div className="sidebar-mode-toggle">
+              <button
+                className={threadVisibility === "relevant" ? "sidebar-mode-btn active" : "sidebar-mode-btn"}
+                onClick={() => setThreadVisibility("relevant")}
+              >
+                Relevant
+              </button>
+              <button
+                className={threadVisibility === "all" ? "sidebar-mode-btn active" : "sidebar-mode-btn"}
+                onClick={() => setThreadVisibility("all")}
+              >
+                All
+              </button>
+            </div>
+          </div>
+
+          <div className="sidebar-filters">
+            <input
+              className="sidebar-search"
+              type="text"
+              value={threadSearch}
+              onChange={(event) => setThreadSearch(event.target.value)}
+              placeholder="Search conversations"
+            />
+            <div className="sidebar-filter-row">
+              <label className="sidebar-filter-field">
+                <span>Sort</span>
+                <select value={sidebarSort} onChange={(event) => setSidebarSort(event.target.value as "updated" | "created" | "title")}>
+                  <option value="updated">Updated</option>
+                  <option value="created">Created</option>
+                  <option value="title">Title</option>
+                </select>
+              </label>
+              <label className="sidebar-filter-field">
+                <span>Group</span>
+                <select value={sidebarGroup} onChange={(event) => setSidebarGroup(event.target.value as "recency" | "workspace")}>
+                  <option value="recency">Recency</option>
+                  <option value="workspace">Workspace</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          {visiblePinnedThreads.length > 0 && (
             <div className="sidebar-section">
               <div className="section-title">Pinned</div>
-              {pinnedThreadsDisplay.map((thread) => (
-                <ThreadRow 
-                  key={thread.id} 
-                  thread={thread} 
-                  active={thread.id === activeThreadId} 
-                  onSelect={handleSelectThread(thread.id)} 
-                  onPin={handleTogglePin(thread.id)} 
-                  onArchive={handleToggleArchive(thread.id)} 
-                  onClose={handleCloseWorkspace(thread.id)} 
+              {visiblePinnedThreads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  active={thread.id === activeThreadId}
+                  pinned={pinnedIds.has(thread.id)}
+                  archived={archivedIds.has(thread.id)}
+                  unread={unreadThreadIds.has(thread.id)}
+                  onSelect={handleSelectThread(thread.id)}
+                  onPin={handleTogglePin(thread.id)}
+                  onArchive={handleToggleArchive(thread.id)}
+                  onRename={handleRenameThread(thread.id)}
+                  onToggleUnread={handleToggleUnread(thread.id)}
+                  onClose={handleCloseWorkspace(thread.id)}
                 />
               ))}
             </div>
@@ -1799,36 +2814,126 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
 
           <div className="sidebar-section">
             <div className="section-title">Sessions</div>
-            {regularThreadsDisplay.length === 0 && historyLoaded && <div className="thread-empty">No sessions yet. Click + to start one.</div>}
-            {regularThreadsDisplay.map((thread) => (
-              <ThreadRow 
-                key={thread.id} 
-                thread={thread} 
-                active={thread.id === activeThreadId} 
-                onSelect={handleSelectThread(thread.id)} 
-                onPin={handleTogglePin(thread.id)} 
-                onArchive={handleToggleArchive(thread.id)} 
-                onClose={handleCloseWorkspace(thread.id)} 
-              />
+            {groupedRegularThreads.length === 0 && historyLoaded && (
+              <div className="thread-empty">No matching sessions yet.</div>
+            )}
+            {groupedRegularThreads.map((group) => (
+              <div className="sidebar-thread-group" key={group.key}>
+                {showRegularGroupLabels && <div className="sidebar-thread-group-title">{group.label}</div>}
+                {group.threads.map((thread) => (
+                  <ThreadRow
+                    key={thread.id}
+                    thread={thread}
+                    active={thread.id === activeThreadId}
+                    pinned={pinnedIds.has(thread.id)}
+                    archived={archivedIds.has(thread.id)}
+                    unread={unreadThreadIds.has(thread.id)}
+                    onSelect={handleSelectThread(thread.id)}
+                    onPin={handleTogglePin(thread.id)}
+                    onArchive={handleToggleArchive(thread.id)}
+                    onRename={handleRenameThread(thread.id)}
+                    onToggleUnread={handleToggleUnread(thread.id)}
+                    onClose={handleCloseWorkspace(thread.id)}
+                  />
+                ))}
+              </div>
             ))}
           </div>
 
-          {archivedThreadsDisplay.length > 0 && (
+          {visibleArchivedThreads.length > 0 && (
             <div className="sidebar-section">
               <div className="section-title">Archived</div>
-              {archivedThreadsDisplay.map((thread) => (
-                <ThreadRow 
-                  key={thread.id} 
-                  thread={thread} 
-                  active={thread.id === activeThreadId} 
-                  onSelect={handleSelectThread(thread.id)} 
-                  onPin={handleTogglePin(thread.id)} 
-                  onArchive={handleToggleArchive(thread.id)} 
-                  onClose={handleCloseWorkspace(thread.id)} 
+              {visibleArchivedThreads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  thread={thread}
+                  active={thread.id === activeThreadId}
+                  pinned={pinnedIds.has(thread.id)}
+                  archived={archivedIds.has(thread.id)}
+                  unread={unreadThreadIds.has(thread.id)}
+                  onSelect={handleSelectThread(thread.id)}
+                  onPin={handleTogglePin(thread.id)}
+                  onArchive={handleToggleArchive(thread.id)}
+                  onRename={handleRenameThread(thread.id)}
+                  onToggleUnread={handleToggleUnread(thread.id)}
+                  onClose={handleCloseWorkspace(thread.id)}
                 />
               ))}
             </div>
           )}
+
+          <div className="sidebar-section sidebar-tools-section">
+            <div className="sidebar-tools-head">
+              <div className="section-title">Skills</div>
+              <button
+                className="ghost sidebar-tools-toggle"
+                onClick={() => setShowSkillsInSidebar((prev) => !prev)}
+              >
+                {showSkillsInSidebar ? "Hide" : "Show"}
+              </button>
+            </div>
+            {showSkillsInSidebar ? (
+              <Suspense fallback={<LazyPanelFallback label="Loading skills..." />}>
+                <SidebarSkills workspacePath={workspacePath} variant="sidebar" />
+              </Suspense>
+            ) : null}
+          </div>
+
+          <div className="sidebar-section sidebar-tools-section">
+            <div className="sidebar-tools-head">
+              <div className="section-title">Automations</div>
+              <button
+                className="ghost sidebar-tools-toggle"
+                onClick={() => setShowAutomationsInSidebar((prev) => !prev)}
+              >
+                {showAutomationsInSidebar ? "Hide" : "Show"}
+              </button>
+            </div>
+            {showAutomationsInSidebar ? (
+              <Suspense fallback={<LazyPanelFallback label="Loading automations..." />}>
+                <SidebarAutomations onOpenCloudPanel={openCloudSurface} variant="sidebar" />
+              </Suspense>
+            ) : null}
+          </div>
+
+          <div className="sidebar-section sidebar-tools-section">
+            <div className="sidebar-tools-head">
+              <div className="section-title">Semantic</div>
+              <button
+                className="ghost sidebar-tools-toggle"
+                onClick={() => setShowSemanticInSidebar((prev) => !prev)}
+              >
+                {showSemanticInSidebar ? "Hide" : "Show"}
+              </button>
+            </div>
+            {showSemanticInSidebar ? (
+              <Suspense fallback={<LazyPanelFallback label="Loading semantic search..." />}>
+                <SidebarSemanticSearch
+                  workspacePath={workspacePath}
+                  onOpenFile={handleSemanticOpenFile}
+                  onPinContext={handlePinSemanticContext}
+                />
+              </Suspense>
+            ) : null}
+          </div>
+
+          <div className="sidebar-section sidebar-tools-section">
+            {workspaceReadyDisplay ? (
+              <Suspense fallback={<LazyPanelFallback label="Loading task board..." />}>
+                <SidebarTaskBoard cards={workspaceTaskBoardCards} onOpenBoard={openTaskBoardPage} />
+              </Suspense>
+            ) : (
+              <div className="taskboard-sidebar taskboard-sidebar-empty-state">
+                <div className="taskboard-sidebar-title">Task Board</div>
+                <div className="taskboard-sidebar-empty-message">
+                  Select a project to use the Task Board.
+                </div>
+                <button className="ghost" onClick={openWorkspace}>
+                  Select Project
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="sidebar-footer">
           <button className="settings-btn" onClick={() => setShowSettings(true)}>Settings</button>
@@ -1850,7 +2955,10 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
         {activeThreadId && (
         <header className="topbar">
           <div className="topbar-left">
-            <div className="workspace-title">{activeThreadDisplay?.cwd?.split("/").pop() || activeThreadDisplay?.preview || "No folder selected"}</div>
+            <div className="workspace-title-row">
+              <div className="workspace-title">{activeThreadDisplay?.cwd?.split("/").pop() || activeThreadDisplay?.preview || "No folder selected"}</div>
+              <WorkspaceSwitcher />
+            </div>
             <div className="workspace-meta">
               {activeThreadDisplay?.cwd ? (
                 <>
@@ -1863,6 +2971,47 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
             </div>
           </div>
           <div className="topbar-actions">
+            <button
+              className="ghost"
+              onClick={() => textareaRef.current?.focus()}
+              title="Focus composer"
+            >
+              New Prompt
+            </button>
+            <button
+              className={showComposerCloud ? "ghost active" : "ghost"}
+              onClick={openCloudFromComposer}
+              title="Toggle cloud tasks"
+              disabled={!workspaceReadyDisplay}
+            >
+              Cloud
+            </button>
+            <button
+              className={showTaskBoardPage ? "ghost active" : "ghost"}
+              onClick={() => {
+                if (showTaskBoardPage) {
+                  setShowTaskBoardPage(false);
+                } else {
+                  openTaskBoardPage();
+                }
+              }}
+              title="Toggle task board"
+              disabled={!workspaceReadyDisplay}
+            >
+              Board
+            </button>
+            <button
+              className={showAuxPanel ? "ghost active" : "ghost"}
+              onClick={toggleBrowserPanel}
+              title="Toggle browser panel"
+            >
+              Browser
+            </button>
+            {showAuxPanel && (
+              <button className="ghost" onClick={closeAuxPanel}>
+                Close Panel
+              </button>
+            )}
             {activeTurnId && (
               <button className="danger" onClick={interruptTurn}>Stop</button>
             )}
@@ -1870,40 +3019,73 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
         </header>
         )}
 
-        <div className="workspace">
+        <div className={`workspace ${showTaskBoardPage ? "workspace-mode-page" : showAuxPanel ? "" : "workspace-no-inspector"}`}>
           {!activeThreadId ? (
-            <WelcomeScreen
-              onOpenFolder={openWorkspace}
-              onOpenSettings={() => setShowSettings(true)}
-              onNewSession={createNewSession}
-              onSelectThread={selectThread}
-            />
+            <Suspense fallback={<LazyPanelFallback label="Loading workspace..." />}>
+              <WelcomeScreen
+                onOpenFolder={openWorkspace}
+                onOpenSettings={() => setShowSettings(true)}
+                onNewSession={createNewSession}
+                onSelectThread={selectThread}
+              />
+            </Suspense>
+          ) : (
+          showTaskBoardPage ? (
+            <section className="mode-page">
+              <Suspense fallback={<LazyPanelFallback label="Loading task board..." />}>
+                <TaskBoard
+                  workspacePath={workspacePath || ""}
+                  cards={workspaceTaskBoardCards}
+                  threads={workspaceThreads}
+                  activeThreadId={activeThreadId}
+                  importingCloud={importingCloudTasks}
+                  onCreateCard={handleCreateTaskBoardCard}
+                  onMoveCard={handleMoveTaskBoardCard}
+                  onDeleteCard={handleDeleteTaskBoardCard}
+                  onSetDependencies={handleSetTaskBoardDeps}
+                  onLinkActiveThread={handleLinkTaskBoardActiveThread}
+                  onLinkThread={handleLinkTaskBoardThread}
+                  onOpenThread={handleOpenBoardThread}
+                  onImportCloudTasks={handleImportCloudTasksToBoard}
+                />
+              </Suspense>
+            </section>
           ) : (
           <SplitLayout
-            leftPanel={<DiffPanel />}
+            leftPanel={(
+              <Suspense fallback={<LazyPanelFallback label="Loading changes..." />}>
+                <DiffPanel />
+              </Suspense>
+            )}
             rightPanel={(
               <section className="chat-panel">
-            <div className="messages" ref={messagesRef}>
-              {messages.length === 0 && pendingApprovals.length === 0 && (
-                <div className="empty-state">
-                  {workspaceReadyDisplay ? (
-                    <><h3>Start a session</h3><p>Send a task to begin. Updates stream here.</p></>
-                  ) : (
-                    <><h3>Select a folder to start</h3><p>Choose a workspace before starting a chat.</p><button className="primary" onClick={openWorkspace}>Open folder</button></>
-                  )}
+            <div className={shouldVirtualizeChat ? "messages messages-virtualized" : "messages"} ref={messagesRef}>
+              {shouldVirtualizeChat ? (
+                <div className="messages-virtual-spacer" style={{ height: Math.max(1, chatVirtualMetrics.totalHeight) }}>
+                  {visibleChatVirtualRows.map((row) => (
+                    <VirtualizedChatRow
+                      key={row.item.key}
+                      itemKey={row.item.key}
+                      top={row.top}
+                      onMeasure={handleChatRowMeasure}
+                    >
+                      {renderChatItem(row.item)}
+                    </VirtualizedChatRow>
+                  ))}
+                  <div
+                    ref={messagesEndRef}
+                    className="messages-end-anchor"
+                    style={{ top: Math.max(0, chatVirtualMetrics.totalHeight - 1) }}
+                  />
                 </div>
+              ) : (
+                <>
+                  {chatItems.map((item) => (
+                    <React.Fragment key={item.key}>{renderChatItem(item)}</React.Fragment>
+                  ))}
+                  <div ref={messagesEndRef} className="messages-end-anchor" />
+                </>
               )}
-              {messages.map((message) => <ChatBubble key={message.id} message={message} />)}
-              {pendingApprovals.map((approval) => <ApprovalCard key={approval.id} approval={approval} onAccept={() => respondApproval(approval, "accept")} onDecline={() => respondApproval(approval, "decline")} />)}
-              {activeTurnId && (
-                <div className="thinking-row">
-                  <div className="thinking-indicator">
-                    <div className="pulsing-dot" />
-                    <span className="shimmer-text">{statusHeader || "Working..."}</span>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
             </div>
 
             <div className={workspaceReadyDisplay ? "composer" : "composer disabled"} ref={composerRef} onPointerDown={(event) => event.stopPropagation()}>
@@ -1966,19 +3148,65 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
                     </div>
 
                     <div className="composer-actions">
+                      <span className="composer-shortcut">⌘⏎ to run</span>
+                      <button
+                        className={useSemanticContext ? "ghost semantic-quick active" : "ghost semantic-quick"}
+                        type="button"
+                        aria-pressed={useSemanticContext}
+                        onClick={() => setUseSemanticContext((prev) => !prev)}
+                        disabled={!workspaceReadyDisplay}
+                      >
+                        Semantic
+                      </button>
+                      <button
+                        className={showComposerCloud ? "ghost cloud-quick active" : "ghost cloud-quick"}
+                        type="button"
+                        aria-pressed={showComposerCloud}
+                        onClick={openCloudFromComposer}
+                        disabled={!workspaceReadyDisplay}
+                      >
+                        ☁ Cloud
+                      </button>
                       <button className="ghost attach" type="button" disabled={!workspaceReadyDisplay}>Attach</button>
                       <button className="primary inline-run" onClick={sendTurn} disabled={!workspaceReadyDisplay || !input.trim()}>Run</button>
                     </div>
                   </div>
+                  {(lastSemanticContextMeta || pinnedSemanticContext.length > 0) && (
+                    <div className="composer-semantic-strip">
+                      {lastSemanticContextMeta ? (
+                        <span className="composer-semantic-meta">
+                          Context used: {lastSemanticContextMeta.autoHits} auto + {lastSemanticContextMeta.pinned} pinned
+                        </span>
+                      ) : null}
+                      {pinnedSemanticContext.length > 0 ? (
+                        <>
+                          <span className="composer-semantic-meta">
+                            Pinned: {pinnedSemanticContext.length}
+                          </span>
+                          <button className="ghost composer-semantic-clear" type="button" onClick={clearPinnedSemanticContext}>
+                            Clear pinned
+                          </button>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
               </div>
+              {showComposerCloud && workspaceReadyDisplay && (
+                <div className="composer-cloud-surface" onPointerDown={(event) => event.stopPropagation()}>
+                  <Suspense fallback={<LazyPanelFallback label="Loading cloud tasks..." />}>
+                    <CloudPanel />
+                  </Suspense>
+                </div>
+              )}
             </div>
               </section>
             )}
           />
+          )
           )}
 
-          {activeThreadId && (
+          {activeThreadId && showAuxPanel && (
             <>
             <div className="resize-handle right" onPointerDown={(event) => {
               event.preventDefault();
@@ -1988,185 +3216,207 @@ Do NOT use web_fetch or web_search for navigation requests - use the browser-cli
               document.body.style.userSelect = "none";
             }} />
 
-          <aside className="right-panel">
-            <div className="tabs">
-              {[{ id: "events", label: "Events" }, { id: "git", label: "Git" }, { id: "cloud", label: "☁️ Cloud" }, { id: "browser", label: "🌐 Browser" }].map((tab) => (
-                <button key={tab.id} className={activeTab === tab.id ? "tab active" : "tab"} onClick={() => setActiveTab(tab.id as typeof activeTab)}>{tab.label}</button>
-              ))}
+          <aside className="right-panel aux-panel">
+            <div className="aux-panel-header">
+              <div className="aux-panel-title">Browser</div>
+              <button className="ghost" onClick={closeAuxPanel}>Close</button>
             </div>
 
             <div className="tab-body">
-              {activeTab === "files" && (
-                <div className="panel-section">
-                  <div className="panel-title">Changed files</div>
-                  {fileChanges.length === 0 && <div className="panel-empty">No file changes yet.</div>}
-                  {fileChanges.map((change, index) => (
-                    <div key={`${change.path}-${index}`} className="file-row">
-                      <span className={`file-kind ${change.kind}`}>{change.kind}</span>
-                      <span className="file-path">{change.path}</span>
-                    </div>
-                  ))}
-                  {turnDiff && <pre className="diff-view">{turnDiff}</pre>}
-                </div>
-              )}
-
-              {activeTab === "terminal" && (
-                <div className="panel-section">
-                  <div className="panel-title">Command output</div>
-                  <pre className="terminal-output">{terminalOutput}</pre>
-                </div>
-              )}
-
-              {activeTab === "git" && (
-                <div className="panel-section">
-                  <div className="panel-title">Repository</div>
-                  <div className="git-row"><span>Branch</span><span>{activeThreadDisplay?.gitInfo?.branch || "-"}</span></div>
-                  <div className="git-row"><span>SHA</span><span>{activeThreadDisplay?.gitInfo?.sha || "-"}</span></div>
-                  <div className="git-row"><span>Origin</span><span>{activeThreadDisplay?.gitInfo?.originUrl || "-"}</span></div>
-                </div>
-              )}
-
-              {activeTab === "events" && (
-                <div className="panel-section panel-section--events">
-                  <div className="panel-title">Activity</div>
-                  <div className="activity-list">
-                    {activityTimeline.length === 0 && <div className="activity-empty">No activity yet.</div>}
-                    {activityTimeline.map(renderTimelineItem)}
-                    <div ref={activityEndRef} />
-                  </div>
-                  {stderrLines.length > 0 && (
-                    <>
-                      <div className="panel-title">Diagnostics</div>
-                      <div className="stderr-list">
-                        {stderrLines.map((line, index) => <div key={`${line}-${index}`} className="stderr-line">{line}</div>)}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {activeTab === "cloud" && <CloudPanel />}
-
-              {activeTab === "browser" && (
+              <Suspense fallback={<LazyPanelFallback label="Loading browser..." />}>
                 <BrowserPanel
                   onNavigate={() => {}}
                   onSnapshot={() => {}}
                 />
-              )}
+              </Suspense>
             </div>
           </aside>
             </>
           )}
         </div>
 
-        {activeThreadId && activeThreadDisplay?.cwd && (
-          <TerminalPanel
-            cwd={activeThreadDisplay.cwd}
-            isOpen={showTerminal}
-            onClose={() => setShowTerminal(false)}
-          />
+        {activeThreadId && activeThreadDisplay?.cwd && showTerminal && (
+          <Suspense fallback={<LazyPanelFallback label="Loading terminal..." />}>
+            <TerminalPanel
+              cwd={activeThreadDisplay.cwd}
+              isOpen={showTerminal}
+              onClose={() => setShowTerminal(false)}
+            />
+          </Suspense>
         )}
       </main>
 
-      <Settings
-        isOpen={showSettings}
-        onClose={() => setShowSettings(false)}
-      />
+      {showSettings && (
+        <Suspense fallback={<LazyOverlayFallback label="Loading settings..." />}>
+          <Settings
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+          />
+        </Suspense>
+      )}
 
-      <CommandPalette
-        commands={commands}
-        isOpen={showCommandPalette}
-        onClose={() => setShowCommandPalette(false)}
-      />
+      {showCommandPalette && (
+        <Suspense fallback={<LazyOverlayFallback label="Loading commands..." />}>
+          <CommandPalette
+            commands={commands}
+            isOpen={showCommandPalette}
+            onClose={() => setShowCommandPalette(false)}
+          />
+        </Suspense>
+      )}
 
       <UpdateNotification position="top-right" />
     </div>
   );
 }
 
-// Thread Row Component - each session represents a project workspace
-const ThreadRow = React.memo(function ThreadRow({ thread, active, onSelect, onPin, onArchive, onClose }: { thread: ThreadSummary; active: boolean; onSelect: () => void; onPin: () => void; onArchive: () => void; onClose: () => void }) {
-  // Extract folder name from cwd for project name
-  const projectName = thread.cwd
-    ? thread.cwd.split("/").pop() || thread.cwd
-    : thread.preview || "Untitled";
+const VirtualizedChatRow = React.memo(function VirtualizedChatRow({
+  itemKey,
+  top,
+  onMeasure,
+  children,
+}: {
+  itemKey: string;
+  top: number;
+  onMeasure: (itemKey: string, height: number) => void;
+  children: React.ReactNode;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
 
-  // Preview is the session title, fallback to a shorter preview
-  const sessionPreview = thread.preview && thread.preview !== projectName
-    ? thread.preview
-    : null;
+  useLayoutEffect(() => {
+    const node = rowRef.current;
+    if (!node) return;
+    onMeasure(itemKey, node.offsetHeight);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      onMeasure(itemKey, node.offsetHeight);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [itemKey, onMeasure]);
 
   return (
-    <button
+    <div className="messages-virtual-row" style={{ transform: `translateY(${top}px)` }}>
+      <div ref={rowRef} className="messages-virtual-inner">
+        {children}
+      </div>
+    </div>
+  );
+});
+
+// Thread Row Component - each session represents a project workspace
+type ThreadRowProps = {
+  thread: ThreadSummary;
+  active: boolean;
+  pinned: boolean;
+  archived: boolean;
+  unread: boolean;
+  onSelect: () => void;
+  onPin: () => void;
+  onArchive: () => void;
+  onRename: () => void;
+  onToggleUnread: () => void;
+  onClose: () => void;
+};
+
+const ThreadRow = React.memo(function ThreadRow({
+  thread,
+  active,
+  pinned,
+  archived,
+  unread,
+  onSelect,
+  onPin,
+  onArchive,
+  onRename,
+  onToggleUnread,
+  onClose,
+}: ThreadRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const projectName = getProjectName(thread);
+  const sessionPreview = thread.preview && thread.preview !== projectName ? thread.preview : null;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [menuOpen]);
+
+  const runMenuAction = (event: React.MouseEvent, action: () => void) => {
+    event.stopPropagation();
+    action();
+    setMenuOpen(false);
+  };
+
+  return (
+    <div
       className={active ? "thread-row active" : "thread-row"}
       onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      tabIndex={0}
+      role="button"
       title={thread.cwd || undefined}
     >
-      <div className="thread-icon">
-        <span className="folder-icon">📁</span>
+      <div className="thread-icon thread-icon--project">
+        <span className="thread-project-initial">{projectName.charAt(0).toUpperCase()}</span>
       </div>
       <div className="thread-main">
         <div className="thread-project">{projectName}</div>
         {sessionPreview && <div className="thread-preview">{sessionPreview}</div>}
         <div className="thread-meta-row">
-          {thread.gitInfo?.branch && (
-            <span className="thread-branch">{thread.gitInfo.branch}</span>
-          )}
+          {thread.gitInfo?.branch ? <span className="thread-branch">{thread.gitInfo.branch}</span> : null}
           <span className="thread-time">
-            {thread.updatedAt || thread.createdAt
-              ? formatTime((thread.updatedAt || thread.createdAt) * 1000)
-              : "--"}
+            {thread.updatedAt || thread.createdAt ? formatTime(getThreadUpdatedAt(thread) * 1000) : "--"}
           </span>
         </div>
       </div>
-      <div className="thread-actions">
-        <button
-          className="ghost icon"
-          onClick={(event) => {
-            event.stopPropagation();
-            onPin();
-          }}
-          title="Pin"
-        >
-          Pin
-        </button>
-        <button
-          className="ghost icon close"
-          onClick={(event) => {
-            event.stopPropagation();
-            onClose();
-          }}
-          title="Close"
-        >
-          ×
-        </button>
+      <div className="thread-row-trailing">
+        {unread ? <span className="thread-unread-dot" title="Unread messages" /> : null}
+        <div className={menuOpen ? "thread-actions menu-open" : "thread-actions"} ref={menuRef}>
+          <button
+            className="ghost icon thread-menu-trigger"
+            onClick={(event) => {
+              event.stopPropagation();
+              setMenuOpen((prev) => !prev);
+            }}
+            title="Conversation actions"
+          >
+            ⋯
+          </button>
+          {menuOpen ? (
+            <div className="thread-menu" onClick={(event) => event.stopPropagation()}>
+              <button className="thread-menu-item" onClick={(event) => runMenuAction(event, onRename)}>Rename</button>
+              <button className="thread-menu-item" onClick={(event) => runMenuAction(event, onPin)}>{pinned ? "Unpin" : "Pin"}</button>
+              <button className="thread-menu-item" onClick={(event) => runMenuAction(event, onArchive)}>{archived ? "Unarchive" : "Archive"}</button>
+              <button className="thread-menu-item" onClick={(event) => runMenuAction(event, onToggleUnread)}>{unread ? "Mark as read" : "Mark as unread"}</button>
+              <button className="thread-menu-item danger" onClick={(event) => runMenuAction(event, onClose)}>Close</button>
+            </div>
+          ) : null}
+        </div>
       </div>
-    </button>
+    </div>
   );
 });
 
 // Chat Bubble Component - memoized to prevent unnecessary re-renders
 const ChatBubble = React.memo(function ChatBubble({ message }: { message: Message }) {
   const content = message.text || "";
-  // Memoize markdown components to prevent recreation on every render
-  const markdownComponents = useMemo(() => ({
-    pre({ children }: { children: React.ReactNode }) {
-      return <pre className="code-block">{children}</pre>;
-    },
-    code({ className, children, ...props }: { className?: string; children: React.ReactNode }) {
-      // If there's a className (language-*) or parent is pre, it's a code block
-      const hasLang = Boolean(className);
-      if (hasLang) {
-        return <code className={`code-inner ${className}`} {...props}>{String(children).replace(/\n$/, "")}</code>;
-      }
-      // Inline code
-      return <code className="inline-code" {...props}>{children}</code>;
-    },
-  }), []);
-
-  const markdown = useMemo(() => (
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>
-  ), [content, markdownComponents]);
+  const markdown = (
+    <Suspense fallback={<span className="markdown-fallback">{content}</span>}>
+      <MarkdownContent content={content} />
+    </Suspense>
+  );
 
   if (message.role === "user") {
     return <div className="chat-row"><div className="message-bubble user markdown">{markdown}</div></div>;
@@ -2189,4 +3439,3 @@ const ApprovalCard = React.memo(function ApprovalCard({ approval, onAccept, onDe
     </div>
   );
 });
-

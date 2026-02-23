@@ -7,3 +7,5 @@ release/
 *.dmg
 *.zip
 *.blockmap
+build/bin/*
+!build/bin/.gitkeep

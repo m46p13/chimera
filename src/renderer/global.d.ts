@@ -196,6 +196,57 @@ type BrowserPanelController = {
   getTitle: () => string;
 };
 
+type CodexCliInfo = {
+  source: "env" | "bundled" | "path";
+  executablePath: string;
+  available: boolean;
+  version: string | null;
+};
+
+type SemanticSearchHit = {
+  id: string;
+  source: "semantic" | "rg" | "hybrid";
+  score: number;
+  path: string;
+  absolutePath: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  snippet: string;
+};
+
+type SemanticIndexStatus = {
+  workspacePath: string;
+  indexPath: string;
+  exists: boolean;
+  indexing: boolean;
+  totalFiles?: number;
+  totalChunks?: number;
+  indexedAt?: number;
+  lastError?: string | null;
+};
+
+type SemanticIndexStats = {
+  workspacePath: string;
+  indexPath: string;
+  totalFiles: number;
+  totalChunks: number;
+  indexedAt: number;
+  durationMs: number;
+  reusedFiles: number;
+  updatedFiles: number;
+  removedFiles: number;
+};
+
+type SemanticSearchResult = {
+  query: string;
+  mode: "semantic" | "smart";
+  tookMs: number;
+  fromIndex: boolean;
+  autoRefreshed: boolean;
+  hits: SemanticSearchHit[];
+};
+
 // MCP Tool types
 type McpTool = {
   name: string;
@@ -364,10 +415,29 @@ declare global {
         touch: (folderPath: string) => Promise<{ success: boolean; error?: string }>;
       };
 
+      // Semantic search API
+      semantic: {
+        getStatus: (workspacePath: string) => Promise<{ success: boolean; status?: SemanticIndexStatus; error?: string }>;
+        indexWorkspace: (workspacePath: string) => Promise<{ success: boolean; stats?: SemanticIndexStats; error?: string }>;
+        search: (params: {
+          workspacePath: string;
+          query: string;
+          limit?: number;
+          minScore?: number;
+          mode?: "semantic" | "smart";
+        }) => Promise<{ success: boolean; result?: SemanticSearchResult; error?: string }>;
+      };
+
       // MCP Browser Tools API
       mcp: {
         listTools: () => Promise<{ success: boolean; tools?: McpTool[]; error?: string }>;
         callTool: (name: string, args: Record<string, unknown>) => Promise<{ success: boolean; result?: McpToolResult; error?: string }>;
+      };
+
+      // Skills API
+      skills: {
+        installGit: (params: { repoUrl: string; workspacePath?: string | null; scope?: "personal" | "project" }) =>
+          Promise<{ success: boolean; path?: string; warning?: string; error?: string }>;
       };
 
       // Updater API
@@ -388,7 +458,10 @@ declare global {
 
       // App info API
       getAppPath?: () => Promise<string>;
+      getVersion?: () => Promise<string>;
       getAppVersion?: () => Promise<string>;
+      getHomePath?: () => Promise<string>;
+      getCliInfo?: () => Promise<CodexCliInfo>;
 
       // Login item settings
       setLoginItemSettings?: (settings: { openAtLogin: boolean }) => Promise<void>;

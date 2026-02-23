@@ -2,10 +2,10 @@ import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 
 // Sidebar width (persisted)
-export const sidebarWidthAtom = atomWithStorage<number>("chimera-sidebar-width", 260);
+export const sidebarWidthAtom = atomWithStorage<number>("chimera-sidebar-width", 280);
 
 // Inspector width (persisted)
-export const inspectorWidthAtom = atomWithStorage<number>("chimera-inspector-width", 320);
+export const inspectorWidthAtom = atomWithStorage<number>("chimera-inspector-width", 360);
 
 // Browser mode chat panel width (persisted)
 export const browserChatWidthAtom = atomWithStorage<number>("chimera-browser-chat-width", 380);

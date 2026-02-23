@@ -118,6 +118,23 @@ export type CodexStatus = {
   message?: string;
 };
 
+export type TaskBoardKind = "local" | "cloud";
+
+export type TaskBoardColumn = "backlog" | "ready" | "running" | "blocked" | "review" | "done";
+
+export type TaskBoardCard = {
+  id: string;
+  workspacePath: string;
+  title: string;
+  kind: TaskBoardKind;
+  column: TaskBoardColumn;
+  deps: string[];
+  threadId?: string | null;
+  cloudTaskId?: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export const getEmptyThreadDetailState = (): ThreadDetailState => ({
   messages: [],
   activity: [],

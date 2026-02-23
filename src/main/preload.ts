@@ -43,6 +43,57 @@ type UpdateStatus = {
   releaseNotes?: string;
 };
 
+type CodexCliInfo = {
+  source: "env" | "bundled" | "path";
+  executablePath: string;
+  available: boolean;
+  version: string | null;
+};
+
+type SemanticSearchHit = {
+  id: string;
+  source: "semantic" | "rg" | "hybrid";
+  score: number;
+  path: string;
+  absolutePath: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  snippet: string;
+};
+
+type SemanticIndexStatus = {
+  workspacePath: string;
+  indexPath: string;
+  exists: boolean;
+  indexing: boolean;
+  totalFiles?: number;
+  totalChunks?: number;
+  indexedAt?: number;
+  lastError?: string | null;
+};
+
+type SemanticIndexStats = {
+  workspacePath: string;
+  indexPath: string;
+  totalFiles: number;
+  totalChunks: number;
+  indexedAt: number;
+  durationMs: number;
+  reusedFiles: number;
+  updatedFiles: number;
+  removedFiles: number;
+};
+
+type SemanticSearchResult = {
+  query: string;
+  mode: "semantic" | "smart";
+  tookMs: number;
+  fromIndex: boolean;
+  autoRefreshed: boolean;
+  hits: SemanticSearchHit[];
+};
+
 const api = {
   request: (method: string, params?: unknown) =>
     ipcRenderer.invoke("codex:request", { method, params }),
@@ -222,9 +273,31 @@ const api = {
     callTool: (name: string, args: Record<string, unknown>) => ipcRenderer.invoke("mcp:tools:call", name, args),
   },
 
+  // Skills API
+  skills: {
+    installGit: (params: { repoUrl: string; workspacePath?: string | null; scope?: "personal" | "project" }) =>
+      ipcRenderer.invoke("skills:install-git", params),
+  },
+
   // App path API
   getAppPath: () => ipcRenderer.invoke("app:getPath"),
   getVersion: () => ipcRenderer.invoke("app:getVersion"),
+  getHomePath: () => ipcRenderer.invoke("app:getHomePath"),
+  getCliInfo: (): Promise<CodexCliInfo> => ipcRenderer.invoke("codex:cliInfo"),
+  semantic: {
+    getStatus: (workspacePath: string): Promise<{ success: boolean; status?: SemanticIndexStatus; error?: string }> =>
+      ipcRenderer.invoke("semantic:status", workspacePath),
+    indexWorkspace: (workspacePath: string): Promise<{ success: boolean; stats?: SemanticIndexStats; error?: string }> =>
+      ipcRenderer.invoke("semantic:index", workspacePath),
+    search: (params: {
+      workspacePath: string;
+      query: string;
+      limit?: number;
+      minScore?: number;
+      mode?: "semantic" | "smart";
+    }): Promise<{ success: boolean; result?: SemanticSearchResult; error?: string }> =>
+      ipcRenderer.invoke("semantic:search", params),
+  },
 
   // Updater API
   updater: {

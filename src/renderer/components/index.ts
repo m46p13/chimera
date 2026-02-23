@@ -12,3 +12,8 @@ export * from "./WelcomeScreen";
 export * from "./UpdateNotification";
 export * from "./Settings";
 export * from "./RateLimitDisplay";
+export * from "./SidebarAutomations";
+export * from "./SidebarSkills";
+export * from "./SidebarTaskBoard";
+export * from "./SidebarSemanticSearch";
+export * from "./TaskBoard";

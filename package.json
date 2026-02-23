@@ -15,9 +15,10 @@
     "preview": "vite preview",
     "postinstall": "electron-rebuild -f",
     "rebuild": "electron-rebuild -f",
+    "prepare:codex-bin": "node scripts/prepare-codex-binary.mjs",
     "mcp:browser": "npx tsx src/mcp/browser-server.ts",
-    "dist": "pnpm build && electron-builder",
-    "dist:mac": "pnpm build && electron-builder --mac"
+    "dist": "pnpm prepare:codex-bin && pnpm build && electron-builder",
+    "dist:mac": "pnpm prepare:codex-bin && pnpm build && electron-builder --mac"
   },
   "build": {
     "appId": "com.chimera.app",
@@ -52,6 +53,10 @@
       {
         "from": "browser-cli.sh",
         "to": "browser-cli.sh"
+      },
+      {
+        "from": "build/bin",
+        "to": "bin"
       }
     ],
     "publish": {

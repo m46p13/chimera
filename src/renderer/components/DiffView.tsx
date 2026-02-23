@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import hljs from "highlight.js";
+import hljs from "highlight.js/lib/core";
 
 // Import common languages for highlight.js
 import typescript from "highlight.js/lib/languages/typescript";

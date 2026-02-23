@@ -191,6 +191,13 @@ interface SettingsProps {
   onClose: () => void;
 }
 
+type CodexCliInfo = {
+  source: "env" | "bundled" | "path";
+  executablePath: string;
+  available: boolean;
+  version: string | null;
+};
+
 // Config read/write helpers
 const readConfig = async (key: string): Promise<any> => {
   if (!window.codex) return null;
@@ -236,10 +243,17 @@ const sections: { id: Section; label: string; icon: React.ReactNode }[] = [
   { id: "about", label: "About", icon: <InfoIcon className="nav-icon" /> },
 ];
 
+const cliSourceLabels: Record<CodexCliInfo["source"], string> = {
+  env: "Environment Override",
+  bundled: "Bundled Binary",
+  path: "System PATH",
+};
+
 export function Settings({ isOpen, onClose }: SettingsProps) {
   const [activeSection, setActiveSection] = useState<Section>("general");
   const [isLoading, setIsLoading] = useState(true);
   const [appVersion, setAppVersion] = useState("0.1.0");
+  const [codexCliInfo, setCodexCliInfo] = useState<CodexCliInfo | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   // Atoms
@@ -287,6 +301,15 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
         if (version) setAppVersion(version);
       } catch {
         // Use default
+      }
+
+      try {
+        const cliInfo = await window.codex?.getCliInfo?.();
+        if (cliInfo) {
+          setCodexCliInfo(cliInfo);
+        }
+      } catch {
+        // Hide diagnostics when unavailable
       }
 
       setIsLoading(false);
@@ -837,6 +860,34 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                       </div>
                       <h3 className="about-name">Chimera</h3>
                       <p className="about-version">Version {appVersion}</p>
+
+                      <div className="about-cli-card">
+                        <div className="about-cli-header">
+                          <span className="about-cli-title">Codex CLI</span>
+                          <span className={`about-cli-badge ${codexCliInfo?.available ? "ready" : "missing"}`}>
+                            {codexCliInfo?.available ? "Available" : "Unavailable"}
+                          </span>
+                        </div>
+
+                        <div className="about-cli-grid">
+                          <div className="about-cli-row">
+                            <span className="about-cli-key">Source</span>
+                            <span className="about-cli-value">
+                              {codexCliInfo ? cliSourceLabels[codexCliInfo.source] : "Loading..."}
+                            </span>
+                          </div>
+                          <div className="about-cli-row">
+                            <span className="about-cli-key">Version</span>
+                            <span className="about-cli-value">{codexCliInfo?.version || "Unknown"}</span>
+                          </div>
+                          <div className="about-cli-row">
+                            <span className="about-cli-key">Path</span>
+                            <span className="about-cli-value mono">
+                              {codexCliInfo?.executablePath || "Unavailable"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
 
                       <div className="about-actions">
                         <button
@@ -1589,6 +1640,81 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
           gap: 12px;
         }
 
+        .about-cli-card {
+          width: 100%;
+          max-width: 560px;
+          margin: 16px auto 0;
+          padding: 14px;
+          border-radius: 10px;
+          border: 1px solid var(--border-color);
+          background: var(--bg-primary);
+          text-align: left;
+        }
+
+        .about-cli-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 12px;
+        }
+
+        .about-cli-title {
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+          text-transform: uppercase;
+          color: var(--text-secondary);
+        }
+
+        .about-cli-badge {
+          border-radius: 999px;
+          padding: 2px 8px;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.5;
+        }
+
+        .about-cli-badge.ready {
+          color: #22c55e;
+          background: rgba(34, 197, 94, 0.12);
+        }
+
+        .about-cli-badge.missing {
+          color: #ef4444;
+          background: rgba(239, 68, 68, 0.12);
+        }
+
+        .about-cli-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .about-cli-row {
+          display: grid;
+          grid-template-columns: 80px 1fr;
+          gap: 12px;
+          align-items: start;
+        }
+
+        .about-cli-key {
+          font-size: 11px;
+          color: var(--text-tertiary);
+          text-transform: uppercase;
+          letter-spacing: 0.03em;
+        }
+
+        .about-cli-value {
+          font-size: 12px;
+          color: var(--text-secondary);
+          min-width: 0;
+        }
+
+        .about-cli-value.mono {
+          font-family: var(--font-mono);
+          word-break: break-all;
+        }
+
         .update-message {
           font-size: 13px;
           padding: 8px 16px;
@@ -1705,6 +1831,11 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             flex-direction: column;
             gap: 8px;
             align-items: flex-start;
+          }
+
+          .about-cli-row {
+            grid-template-columns: 1fr;
+            gap: 4px;
           }
         }
       `}</style>
