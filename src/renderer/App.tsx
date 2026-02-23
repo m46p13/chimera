@@ -5,6 +5,7 @@ import { useAtom, useAtomValue, useSetAtom } from "jotai";
 // Import components
 import { SplitLayout } from "./components/SplitLayout";
 import { UpdateNotification } from "./components/UpdateNotification";
+import { WorkspaceSwitcher } from "./components/WorkspaceSwitcher";
 
 // Import hooks
 import { useKeyboardShortcuts, type Command, useDebounce, useThreadCache, useIdleDetection, useRateLimitSync } from "./hooks";
