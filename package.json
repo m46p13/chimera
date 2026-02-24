@@ -1,6 +1,6 @@
 {
   "name": "chimera",
-  "version": "0.1.11",
+  "version": "0.1.14",
   "private": true,
   "description": "Chimera — a Codex GUI",
   "main": "dist/main/main.js",
